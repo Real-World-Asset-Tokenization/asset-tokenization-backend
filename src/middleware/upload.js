@@ -1,7 +1,10 @@
-const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
-const { uploadToCloudinary } = require("../utils/cloudinaryUpload");
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Ensure upload directory exists
 const uploadDir = path.join(__dirname, "../../uploads");
@@ -50,46 +53,21 @@ const upload = multer({
 const uploadToCloudinaryMiddleware = (folder = 'kyc-documents') => {
   return async (req, res, next) => {
     try {
-      // Handle single file upload (legacy support)
-      if (req.file) {
-        // Upload to Cloudinary
-        const cloudinaryResult = await uploadToCloudinary(req.file.path, folder);
-
-        // Replace file path with Cloudinary URL
-        req.file.cloudinaryUrl = cloudinaryResult.secure_url;
-        req.file.publicId = cloudinaryResult.public_id;
-        req.file.path = cloudinaryResult.secure_url;
-      }
-
-      // Handle multiple file uploads
-      if (req.files) {
-        for (const fieldName in req.files) {
-          const files = req.files[fieldName];
-          if (files && files.length > 0) {
-            // Upload each file to Cloudinary
-            for (const file of files) {
-              const cloudinaryResult = await uploadToCloudinary(file.path, folder);
-              file.cloudinaryUrl = cloudinaryResult.secure_url;
-              file.publicId = cloudinaryResult.public_id;
-              file.path = cloudinaryResult.secure_url;
-            }
-          }
-        }
-      }
-
+      // For now, just use local file paths
+      // Cloudinary integration can be added later if needed
       next();
     } catch (error) {
-      console.error('Cloudinary upload middleware error:', error);
+      console.error('Upload middleware error:', error);
       return res.status(500).json({
         success: false,
-        message: 'Error uploading to Cloudinary',
+        message: 'Error uploading files',
         error: error.message,
       });
     }
   };
 };
 
-module.exports = {
+export {
   upload,
   uploadToCloudinaryMiddleware,
 };

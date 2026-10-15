@@ -1,6 +1,6 @@
-const express = require("express");
-const { body, validationResult } = require("express-validator");
-const {
+import express from "express";
+import { body, validationResult } from "express-validator";
+import {
   uploadDocument,
   uploadSelfie,
   verifyKYC,
@@ -9,9 +9,9 @@ const {
   pipelineVerify,
   getKYCDetailsByUserId,
   updateKYCStatus,
-} = require("../controllers/kycController");
-const { protect, authorize } = require("../middleware/auth");
-const { upload, uploadToCloudinaryMiddleware } = require("../middleware/upload");
+} from "../controllers/kycController.js";
+import { protect, authorize } from "../middleware/auth.js";
+import { upload, uploadToCloudinaryMiddleware } from "../middleware/upload.js";
 
 const router = express.Router();
 
@@ -55,8 +55,8 @@ router.post(
 );
 
 router.post(
-  "/upload-selfie", 
-  protect, 
+  "/upload-selfie",
+  protect,
   upload.single("selfie"),
   uploadToCloudinaryMiddleware('kyc-selfies'),
   uploadSelfie
@@ -91,4 +91,4 @@ router.put(
   updateKYCStatus
 );
 
-module.exports = router;
+export default router;

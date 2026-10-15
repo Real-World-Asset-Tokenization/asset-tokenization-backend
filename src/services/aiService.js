@@ -1,6 +1,6 @@
-const axios = require('axios');
-const FormData = require('form-data');
-const fs = require('fs');
+import axios from 'axios';
+import FormData from 'form-data';
+import fs from 'fs';
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:5001';
 
@@ -160,4 +160,4 @@ class AIService {
   }
 }
 
-module.exports = new AIService();
+export default new AIService();

@@ -1,11 +1,20 @@
-const KYC = require("../models/KYC");
-const User = require("../models/User");
-const aiService = require("../services/aiService");
-const { deleteFromCloudinary } = require("../utils/cloudinaryUpload");
-const axios = require("axios");
-const FormData = require("form-data");
-const fs = require("fs");
-const path = require("path");
+import KYC from "../models/KYC.js";
+import User from "../models/User.js";
+import aiService from "../services/aiService.js";
+import axios from "axios";
+import FormData from "form-data";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Cloudinary integration stub - can be implemented later
+const deleteFromCloudinary = async (publicId) => {
+  // Placeholder for Cloudinary deletion
+  console.log(`Would delete Cloudinary image: ${publicId}`);
+};
 
 // =============================================================================
 // HELPER FUNCTIONS
@@ -24,7 +33,7 @@ function normalizeNICNumber(idNumber) {
 }
 
 // Upload ID Document
-exports.uploadDocument = async (req, res) => {
+export const uploadDocument = async (req, res) => {
   try {
     const { idType, idNumber } = req.body;
     const userId = req.user.userId;
@@ -167,7 +176,7 @@ exports.uploadDocument = async (req, res) => {
 };
 
 // Upload Selfie
-exports.uploadSelfie = async (req, res) => {
+export const uploadSelfie = async (req, res) => {
   try {
     const userId = req.user.userId;
 
@@ -213,7 +222,7 @@ exports.uploadSelfie = async (req, res) => {
 };
 
 // ── Verify KYC (user-triggered, runs real AI pipeline) ──────────────────────
-exports.verifyKYC = async (req, res) => {
+export const verifyKYC = async (req, res) => {
   try {
     const userId = req.user.userId;
 
@@ -231,11 +240,6 @@ exports.verifyKYC = async (req, res) => {
         message: "Both document and selfie must be uploaded before verification",
       });
     }
-
-    const axios = require("axios");
-    const FormData = require("form-data");
-    const fs = require("fs");
-    const path = require("path");
 
     const tempDir = path.join(__dirname, "../../temp");
     if (!fs.existsSync(tempDir)) {
@@ -313,7 +317,7 @@ exports.verifyKYC = async (req, res) => {
 };
 
 // Get KYC Status
-exports.getKYCStatus = async (req, res) => {
+export const getKYCStatus = async (req, res) => {
   try {
     const userId = req.user.userId;
 
@@ -355,7 +359,7 @@ exports.getKYCStatus = async (req, res) => {
 };
 
 // ── Get KYC Details by User ID (Admin only) ───────────────────────────────
-exports.getKYCDetailsByUserId = async (req, res) => {
+export const getKYCDetailsByUserId = async (req, res) => {
   try {
     const { userId } = req.params;
 
@@ -419,7 +423,7 @@ exports.getKYCDetailsByUserId = async (req, res) => {
 };
 
 // ── Update KYC Status (Admin only) ───────────────────────────────────────
-exports.updateKYCStatus = async (req, res) => {
+export const updateKYCStatus = async (req, res) => {
   try {
     const { userId } = req.params;
     const { verificationStatus, rejectionReason } = req.body;
@@ -503,7 +507,7 @@ exports.updateKYCStatus = async (req, res) => {
 };
 
 // ── Admin Verify KYC by User ID (runs real AI pipeline) ─────────────────────
-exports.adminVerifyKYC = async (req, res) => {
+export const adminVerifyKYC = async (req, res) => {
   try {
     const { userId } = req.params;
 
@@ -526,11 +530,6 @@ exports.adminVerifyKYC = async (req, res) => {
         message: "Both document and selfie must be uploaded before verification",
       });
     }
-
-    const axios = require("axios");
-    const FormData = require("form-data");
-    const fs = require("fs");
-    const path = require("path");
 
     const tempDir = path.join(__dirname, "../../temp");
     if (!fs.existsSync(tempDir)) {
@@ -750,8 +749,8 @@ async function _applyPipelineResults(kyc, pipelineResult) {
 function _cleanupTemp(paths, tempDir) {
   for (const p of paths) {
     try {
-      if (p && p.includes(tempDir) && require("fs").existsSync(p)) {
-        require("fs").unlinkSync(p);
+      if (p && p.includes(tempDir) && fs.existsSync(p)) {
+        fs.unlinkSync(p);
       }
     } catch (_) {
       // ignore cleanup errors
@@ -760,7 +759,7 @@ function _cleanupTemp(paths, tempDir) {
 }
 
 // ── Pipeline Verify (Proxy to AI Service) ─────────────────────────────────
-exports.pipelineVerify = async (req, res) => {
+export const pipelineVerify = async (req, res) => {
   try {
     const userId = req.user.userId;
 

@@ -1,13 +1,13 @@
-const express = require("express");
-const { body, validationResult } = require("express-validator");
-const {
+import express from "express";
+import { body, validationResult } from "express-validator";
+import {
   register,
   login,
   getMe,
   verifyUser,
   getAllUsers,
-} = require("../controllers/authController");
-const { protect } = require("../middleware/auth");
+} from "../controllers/authController.js";
+import { protect } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -69,4 +69,4 @@ router.get("/me", protect, getMe);
 router.post("/verify/:userId", protect, verifyUser);
 router.get("/users", protect, getAllUsers);
 
-module.exports = router;
+export default router;

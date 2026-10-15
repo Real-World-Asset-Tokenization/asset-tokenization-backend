@@ -1,10 +1,10 @@
-const Compliance = require("../models/Compliance");
-const User = require("../models/User");
-const KYC = require("../models/KYC");
-const Asset = require("../models/Asset");
+import Compliance from "../models/Compliance.js";
+import User from "../models/User.js";
+import KYC from "../models/KYC.js";
+import Asset from "../models/Asset.js";
 
 // Run Compliance Check
-exports.runComplianceCheck = async (req, res) => {
+export const runComplianceCheck = async (req, res) => {
   try {
     const userId = req.user.userId;
 
@@ -148,7 +148,7 @@ exports.runComplianceCheck = async (req, res) => {
 };
 
 // Get Compliance Report
-exports.getComplianceReport = async (req, res) => {
+export const getComplianceReport = async (req, res) => {
   try {
     const userId = req.user.userId;
 
@@ -200,7 +200,7 @@ exports.getComplianceReport = async (req, res) => {
 };
 
 // Manual Review (Admin/Compliance Officer only)
-exports.manualReview = async (req, res) => {
+export const manualReview = async (req, res) => {
   try {
     const { userId } = req.params;
     const { approvalStatus, notes } = req.body;
@@ -251,7 +251,7 @@ exports.manualReview = async (req, res) => {
 };
 
 // Get All Compliance Records (Admin only)
-exports.getAllComplianceRecords = async (req, res) => {
+export const getAllComplianceRecords = async (req, res) => {
   try {
     const adminId = req.user.userId;
 

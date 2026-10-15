@@ -1,4 +1,4 @@
-const mongoose = require("mongoose");
+import mongoose from "mongoose";
 
 const complianceSchema = new mongoose.Schema({
   userId: {
@@ -71,4 +71,4 @@ complianceSchema.pre("save", function () {
   this.updatedAt = Date.now();
 });
 
-module.exports = mongoose.model("Compliance", complianceSchema);
+export default mongoose.model("Compliance", complianceSchema);

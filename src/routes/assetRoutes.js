@@ -1,253 +1,568 @@
 import express from "express";
+import { body, validationResult } from "express-validator";
 import { ethers } from "ethers";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+
+import {
+  uploadAsset,
+  verifyAsset,
+  getAssetStatus,
+  getUserAssets,
+  getAllAssets,
+  getAssetDetails,
+  updateVerificationStatus,
+} from "../controllers/assetController.js";
+
 import {
   getAssets,
   getAssetById,
   registerAsset,
-  updateAssetStatus,
-  getPlatformStats
+  updateBlockchainStatus,
+  getPlatformStats,
 } from "../controllers/assetController.js";
+
 import { Asset } from "../models/Asset.js";
+import { protect, authorize } from "../middleware/auth.js";
+import {
+  upload,
+  uploadToCloudinaryMiddleware,
+} from "../middleware/upload.js";
+
+const router = express.Router();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const router = express.Router();
+// ==========================================
+// VALIDATION MIDDLEWARE
+// ==========================================
+const validate = (req, res, next) => {
+  const errors = validationResult(req);
 
-router.get("/", getAssets);
-router.get("/stats", getPlatformStats);
-router.post("/faucet", async (req, res) => {
-  try {
-    const { address } = req.body;
-    if (!address || !ethers.isAddress(address)) {
-      return res.status(400).json({ success: false, error: "Valid Ethereum wallet address required" });
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      errors: errors.array(),
+    });
+  }
+
+  next();
+};
+
+const assetValidation = [
+  body("assetName")
+    .trim()
+    .notEmpty()
+    .withMessage("Asset name is required")
+    .isLength({ min: 2 })
+    .withMessage("Asset name must be at least 2 characters"),
+
+  body("assetType")
+    .trim()
+    .notEmpty()
+    .withMessage("Asset type is required")
+    .isIn([
+      "real_estate",
+      "vehicle",
+      "equipment",
+      "intellectual_property",
+      "other",
+    ])
+    .withMessage("Invalid asset type"),
+
+  body("valuation")
+    .notEmpty()
+    .withMessage("Valuation is required")
+    .isNumeric()
+    .withMessage("Valuation must be a number")
+    .isFloat({ min: 0 })
+    .withMessage("Valuation must be non-negative"),
+
+  body("currency")
+    .optional()
+    .isLength({ min: 3, max: 3 })
+    .withMessage("Currency must be 3 characters (e.g., LKR)"),
+];
+
+// ==========================================
+// BLOCKCHAIN CONFIGURATION
+// ==========================================
+const RPC_URL =
+  process.env.BLOCKCHAIN_RPC_URL || "http://127.0.0.1:8545";
+
+const DEPLOYER_PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY;
+
+const getBlockchainContext = async (withSigner = false) => {
+  const provider = new ethers.JsonRpcProvider(RPC_URL);
+
+  let signer = null;
+
+  if (withSigner) {
+    if (!DEPLOYER_PRIVATE_KEY) {
+      throw new Error(
+        "DEPLOYER_PRIVATE_KEY is not configured"
+      );
     }
 
-    const provider = new ethers.JsonRpcProvider("http://127.0.0.1:8545");
-    const deployer = new ethers.Wallet(
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    signer = new ethers.Wallet(
+      DEPLOYER_PRIVATE_KEY,
       provider
     );
+  }
 
-    // Send 1000 ETH to user's wallet
-    let nonce = await provider.getTransactionCount(deployer.address, "latest");
-    const txEth = await deployer.sendTransaction({
+  const deployedPath = path.resolve(
+    __dirname,
+    "../contracts/deployedContracts.json"
+  );
+
+  if (!fs.existsSync(deployedPath)) {
+    throw new Error("Contract deployment not found");
+  }
+
+  const deployedData = JSON.parse(
+    fs.readFileSync(deployedPath, "utf8")
+  );
+
+  const tokenInfo = deployedData.contracts?.AssetToken;
+
+  if (!tokenInfo?.address || !tokenInfo?.abi) {
+    throw new Error(
+      "AssetToken deployment address or ABI is missing"
+    );
+  }
+
+  const tokenContract = new ethers.Contract(
+    tokenInfo.address,
+    tokenInfo.abi,
+    signer || provider
+  );
+
+  return { provider, signer, tokenContract };
+};
+
+// ==========================================
+// 1. ASSET VERIFICATION & DOCUMENT UPLOAD
+// ==========================================
+
+// Upload asset and supporting documents
+router.post(
+  "/upload",
+  protect,
+  upload.fields([
+    { name: "deed", maxCount: 1 },
+    { name: "surveyPlan", maxCount: 1 },
+    { name: "extracts", maxCount: 1 },
+    { name: "priorDeeds", maxCount: 1 },
+    { name: "certificates", maxCount: 1 },
+    { name: "document", maxCount: 1 },
+  ]),
+  uploadToCloudinaryMiddleware("asset-documents"),
+  assetValidation,
+  validate,
+  uploadAsset
+);
+
+// Request asset verification
+router.post("/verify/:assetId", protect, verifyAsset);
+
+// Check verification status
+router.get("/status/:assetId", protect, getAssetStatus);
+
+// Get assets belonging to the authenticated user
+router.get("/my-assets", protect, getUserAssets);
+
+// ==========================================
+// 2. COMPLIANCE OFFICER / ADMIN ROUTES
+// ==========================================
+
+router.get(
+  "/admin/all",
+  protect,
+  authorize("admin", "compliance_officer"),
+  getAllAssets
+);
+
+router.get(
+  "/admin/details/:assetId",
+  protect,
+  authorize("admin", "compliance_officer"),
+  getAssetDetails
+);
+
+router.put(
+  "/admin/status/:assetId",
+  protect,
+  authorize("admin", "compliance_officer"),
+  updateVerificationStatus
+);
+
+// ==========================================
+// 3. PUBLIC BLOCKCHAIN ASSET ROUTES
+// ==========================================
+
+// Get all tokenized/platform assets
+router.get("/", getAssets);
+
+// Platform statistics
+router.get("/stats", getPlatformStats);
+
+// ==========================================
+// 4. DEVELOPMENT FAUCET
+// ==========================================
+
+router.post("/faucet", protect, async (req, res) => {
+  try {
+    const { address } = req.body;
+
+    if (!address || !ethers.isAddress(address)) {
+      return res.status(400).json({
+        success: false,
+        error: "Valid Ethereum wallet address required",
+      });
+    }
+
+    const { provider, signer, tokenContract } =
+      await getBlockchainContext(true);
+
+    // Send test ETH to the requested wallet
+    const ethTx = await signer.sendTransaction({
       to: address,
-      value: ethers.parseEther("1000.0"),
-      nonce: nonce++
+      value: ethers.parseEther("1000"),
     });
-    await txEth.wait();
 
-    // Read contract deployment JSON
-    const deployedPath = path.join(__dirname, "../contracts/deployedContracts.json");
+    await ethTx.wait();
+
     let tokenTxHash = "";
-    if (fs.existsSync(deployedPath)) {
-      const deployedData = JSON.parse(fs.readFileSync(deployedPath, "utf8"));
-      const tokenAddress = deployedData.contracts.AssetToken.address;
-      const tokenAbi = deployedData.contracts.AssetToken.abi;
-      const tokenContract = new ethers.Contract(tokenAddress, tokenAbi, deployer);
 
-      const bal = await tokenContract.balanceOf(deployer.address, 1);
-      if (bal >= 200n && address.toLowerCase() !== deployer.address.toLowerCase()) {
-        const txTokens = await tokenContract.safeTransferFrom(
-          deployer.address,
-          address,
-          1,
-          200n,
-          "0x",
-          { nonce }
-        );
-        const receipt = await txTokens.wait();
+    // Issue test property tokens if the deployer has enough
+    if (
+      address.toLowerCase() !==
+      signer.address.toLowerCase()
+    ) {
+      const deployerBalance =
+        await tokenContract.balanceOf(signer.address, 1);
+
+      if (deployerBalance >= 200n) {
+        const tokenTx =
+          await tokenContract.safeTransferFrom(
+            signer.address,
+            address,
+            1,
+            200n,
+            "0x"
+          );
+
+        const receipt = await tokenTx.wait();
         tokenTxHash = receipt.hash;
       }
     }
 
-    res.json({
+    return res.json({
       success: true,
-      message: "Funded 500 ETH and 200 property tokens successfully!",
-      ethTxHash: txEth.hash,
-      tokenTxHash
+      message: "Development faucet completed",
+      ethTxHash: ethTx.hash,
+      tokenTxHash,
     });
   } catch (error) {
     console.error("Faucet error:", error);
-    res.status(500).json({ success: false, error: error.message });
+
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
   }
 });
+
+// ==========================================
+// 5. AVAILABLE TOKEN SHARES
+// ==========================================
 
 router.get("/:id/available", async (req, res) => {
   try {
     const assetId = Number(req.params.id);
-    const provider = new ethers.JsonRpcProvider("http://127.0.0.1:8545");
-    const deployerAddress = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
-    const deployedPath = path.join(__dirname, "../contracts/deployedContracts.json");
-    if (!fs.existsSync(deployedPath)) {
-      return res.json({ success: true, available: 0 });
+
+    if (!Number.isSafeInteger(assetId) || assetId < 1) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid asset ID",
+      });
     }
-    const deployedData = JSON.parse(fs.readFileSync(deployedPath, "utf8"));
-    const tokenContract = new ethers.Contract(
-      deployedData.contracts.AssetToken.address,
-      deployedData.contracts.AssetToken.abi,
-      provider
-    );
-    const bal = await tokenContract.balanceOf(deployerAddress, assetId);
-    res.json({ success: true, available: Number(bal) });
-  } catch (err) {
-    res.json({ success: true, available: 0 });
+
+    const { tokenContract } =
+      await getBlockchainContext(false);
+
+    const { signer } = await getBlockchainContext(true);
+
+    const availableBalance =
+      await tokenContract.balanceOf(signer.address, assetId);
+
+    return res.json({
+      success: true,
+      available: Number(availableBalance),
+    });
+  } catch (error) {
+    console.error("Available shares error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
   }
 });
 
-router.post("/:id/buy", async (req, res) => {
+// ==========================================
+// 6. BUY FRACTIONAL SHARES
+// ==========================================
+
+router.post("/:id/buy", protect, async (req, res) => {
   try {
     const { buyerAddress, amount, paymentTxHash } = req.body;
     const assetId = Number(req.params.id);
+
+    if (
+      !buyerAddress ||
+      !ethers.isAddress(buyerAddress) ||
+      !Number.isSafeInteger(assetId) ||
+      assetId < 1 ||
+      amount === undefined ||
+      !/^[1-9]\d*$/.test(String(amount))
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid purchase parameters",
+      });
+    }
+
+    // Do not allow a user to specify a different buyer wallet
+    // from the wallet associated with their authenticated account.
+    // Implement this check using your actual user/wallet model.
     const sharesToBuy = BigInt(amount);
 
-    if (!buyerAddress || !amount || Number(amount) <= 0) {
-      return res.status(400).json({ success: false, error: "Invalid purchase parameters" });
-    }
+    const { signer, tokenContract } =
+      await getBlockchainContext(true);
 
-    const provider = new ethers.JsonRpcProvider("http://127.0.0.1:8545");
-    const deployer = new ethers.Wallet(
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-      provider
-    );
+    const availableSupply =
+      await tokenContract.balanceOf(
+        signer.address,
+        assetId
+      );
 
-    const deployedPath = path.join(__dirname, "../contracts/deployedContracts.json");
-    if (!fs.existsSync(deployedPath)) {
-      return res.status(500).json({ success: false, error: "Contract deployment not found" });
-    }
-
-    const deployedData = JSON.parse(fs.readFileSync(deployedPath, "utf8"));
-    const tokenContract = new ethers.Contract(
-      deployedData.contracts.AssetToken.address,
-      deployedData.contracts.AssetToken.abi,
-      deployer
-    );
-
-    const availableSupply = await tokenContract.balanceOf(deployer.address, assetId);
     if (availableSupply < sharesToBuy) {
       return res.status(400).json({
         success: false,
-        error: `Only ${availableSupply.toString()} shares available in primary issuance for this property.`
+        error: `Only ${availableSupply.toString()} shares available`,
       });
     }
 
-    let nonce = await provider.getTransactionCount(deployer.address, "latest");
+    // IMPORTANT: Verify paymentTxHash and the buyer's wallet
+    // ownership on the server before transferring real assets.
+    // This demo route does not independently verify payment.
+
     const tx = await tokenContract.safeTransferFrom(
-      deployer.address,
+      signer.address,
       buyerAddress,
       assetId,
       sharesToBuy,
-      "0x",
-      { nonce }
+      "0x"
     );
+
     const receipt = await tx.wait();
 
-    const remainingAvailable = await tokenContract.balanceOf(deployer.address, assetId);
-    const buyerNewBal = await tokenContract.balanceOf(buyerAddress, assetId);
+    const remainingAvailable =
+      await tokenContract.balanceOf(
+        signer.address,
+        assetId
+      );
 
-    res.json({
+    const buyerBalance =
+      await tokenContract.balanceOf(
+        buyerAddress,
+        assetId
+      );
+
+    return res.json({
       success: true,
-      message: `Successfully purchased ${amount} fractional shares!`,
+      message: `Transferred ${amount} fractional shares`,
       txHash: receipt.hash,
       paymentTxHash: paymentTxHash || "",
       remainingAvailable: Number(remainingAvailable),
-      buyerNewBalance: Number(buyerNewBal)
+      buyerNewBalance: Number(buyerBalance),
     });
   } catch (error) {
     console.error("Purchase error:", error);
-    res.status(500).json({ success: false, error: error.message });
+
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
   }
 });
 
-router.post("/swap", async (req, res) => {
+// ==========================================
+// 7. SWAP PROPERTY SHARES
+// ==========================================
+
+router.post("/swap", protect, async (req, res) => {
   try {
-    const { userAddress, sourceAssetId, targetAssetId, sourceAmount, transferTxHash } = req.body;
+    const {
+      userAddress,
+      sourceAssetId,
+      targetAssetId,
+      sourceAmount,
+      transferTxHash,
+    } = req.body;
+
     const srcId = Number(sourceAssetId);
     const tgtId = Number(targetAssetId);
-    const srcAmt = BigInt(sourceAmount);
 
-    if (!userAddress || srcAmt <= 0n || srcId === tgtId) {
-      return res.status(400).json({ success: false, error: "Invalid swap parameters" });
-    }
-
-    const provider = new ethers.JsonRpcProvider("http://127.0.0.1:8545");
-    const deployer = new ethers.Wallet(
-      "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-      provider
-    );
-
-    const deployedPath = path.join(__dirname, "../contracts/deployedContracts.json");
-    if (!fs.existsSync(deployedPath)) {
-      return res.status(500).json({ success: false, error: "Contract deployment not found" });
-    }
-
-    const deployedData = JSON.parse(fs.readFileSync(deployedPath, "utf8"));
-    const tokenContract = new ethers.Contract(
-      deployedData.contracts.AssetToken.address,
-      deployedData.contracts.AssetToken.abi,
-      deployer
-    );
-
-    // Get asset details from DB
-    const sourceAsset = await Asset.findOne({ assetId: srcId });
-    const targetAsset = await Asset.findOne({ assetId: tgtId });
-
-    if (!sourceAsset || !targetAsset) {
-      return res.status(404).json({ success: false, error: "Source or Target asset not found" });
-    }
-
-    const srcPrice = sourceAsset.sharePriceLKR || (sourceAsset.valuationLKR / sourceAsset.totalShares);
-    const tgtPrice = targetAsset.sharePriceLKR || (targetAsset.valuationLKR / targetAsset.totalShares);
-
-    // Value exchanged in LKR
-    const totalValLKR = Number(srcAmt) * srcPrice;
-    const targetSharesToReceive = BigInt(Math.max(1, Math.floor(totalValLKR / tgtPrice)));
-
-    // Verify deployer has target tokens to issue
-    const deployerTgtBal = await tokenContract.balanceOf(deployer.address, tgtId);
-    if (deployerTgtBal < targetSharesToReceive) {
+    if (
+      !userAddress ||
+      !ethers.isAddress(userAddress) ||
+      !Number.isSafeInteger(srcId) ||
+      !Number.isSafeInteger(tgtId) ||
+      srcId < 1 ||
+      tgtId < 1 ||
+      srcId === tgtId ||
+      !/^[1-9]\d*$/.test(String(sourceAmount))
+    ) {
       return res.status(400).json({
         success: false,
-        error: `Insufficient liquidity in target property #${tgtId}. Available: ${deployerTgtBal.toString()} shares.`
+        error: "Invalid swap parameters",
       });
     }
 
-    // Transfer target shares to the user
-    let nonce = await provider.getTransactionCount(deployer.address, "latest");
+    const sourceShares = BigInt(sourceAmount);
+
+    const sourceAsset = await Asset.findOne({
+      assetId: srcId,
+    });
+
+    const targetAsset = await Asset.findOne({
+      assetId: tgtId,
+    });
+
+    if (!sourceAsset || !targetAsset) {
+      return res.status(404).json({
+        success: false,
+        error: "Source or target asset not found",
+      });
+    }
+
+    const sourcePrice =
+      sourceAsset.sharePriceLKR ??
+      sourceAsset.valuationLKR / sourceAsset.totalShares;
+
+    const targetPrice =
+      targetAsset.sharePriceLKR ??
+      targetAsset.valuationLKR / targetAsset.totalShares;
+
+    if (
+      !Number.isFinite(sourcePrice) ||
+      !Number.isFinite(targetPrice) ||
+      sourcePrice <= 0 ||
+      targetPrice <= 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid asset share price",
+      });
+    }
+
+    const totalValueLKR =
+      Number(sourceShares) * sourcePrice;
+
+    const targetAmount = Math.floor(
+      totalValueLKR / targetPrice
+    );
+
+    if (
+      !Number.isSafeInteger(targetAmount) ||
+      targetAmount < 1
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: "Swap value is too small",
+      });
+    }
+
+    const targetShares = BigInt(targetAmount);
+
+    const { signer, tokenContract } =
+      await getBlockchainContext(true);
+
+    const targetAvailable =
+      await tokenContract.balanceOf(
+        signer.address,
+        tgtId
+      );
+
+    if (targetAvailable < targetShares) {
+      return res.status(400).json({
+        success: false,
+        error: `Insufficient target asset liquidity. Available: ${targetAvailable.toString()}`,
+      });
+    }
+
+    // IMPORTANT:
+    // This preserves the original demo behavior of issuing target
+    // shares. It does not transfer or lock source shares.
+    // Verify the source transfer transaction and wallet ownership
+    // before treating this as a real exchange.
+
     const tx = await tokenContract.safeTransferFrom(
-      deployer.address,
+      signer.address,
       userAddress,
       tgtId,
-      targetSharesToReceive,
-      "0x",
-      { nonce }
+      targetShares,
+      "0x"
     );
+
     const receipt = await tx.wait();
 
-    const userNewSrcBal = await tokenContract.balanceOf(userAddress, srcId);
-    const userNewTgtBal = await tokenContract.balanceOf(userAddress, tgtId);
+    const userSourceBalance =
+      await tokenContract.balanceOf(userAddress, srcId);
 
-    res.json({
+    const userTargetBalance =
+      await tokenContract.balanceOf(userAddress, tgtId);
+
+    return res.json({
       success: true,
-      message: `Successfully exchanged ${sourceAmount} ${sourceAsset.symbol} tokens for ${targetSharesToReceive.toString()} ${targetAsset.symbol} shares!`,
+      message: `Transferred ${targetShares.toString()} ${targetAsset.symbol} shares`,
       txHash: receipt.hash,
-      sourceSharesSpent: Number(sourceAmount),
-      targetSharesReceived: Number(targetSharesToReceive),
-      userSourceBalance: Number(userNewSrcBal),
-      userTargetBalance: Number(userNewTgtBal)
+      transferTxHash: transferTxHash || "",
+      sourceSharesSpent: 0,
+      targetSharesReceived: Number(targetShares),
+      userSourceBalance: Number(userSourceBalance),
+      userTargetBalance: Number(userTargetBalance),
     });
   } catch (error) {
     console.error("Swap error:", error);
-    res.status(500).json({ success: false, error: error.message });
+
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
   }
 });
 
+// ==========================================
+// 8. BLOCKCHAIN ASSET DETAILS & REGISTRATION
+// ==========================================
+
+// Get an asset by its blockchain/database ID
 router.get("/:id", getAssetById);
-router.post("/", registerAsset);
-router.patch("/:id/status", updateAssetStatus);
+
+// Register a blockchain asset
+router.post("/", protect, registerAsset);
+
+// Update blockchain tokenization status
+router.patch(
+  "/:id/status",
+  protect,
+  authorize("admin", "compliance_officer"),
+  updateBlockchainStatus
+);
 
 export default router;

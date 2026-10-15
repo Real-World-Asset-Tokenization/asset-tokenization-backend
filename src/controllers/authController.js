@@ -1,5 +1,5 @@
-const User = require("../models/User");
-const jwt = require("jsonwebtoken");
+import User from "../models/User.js";
+import jwt from "jsonwebtoken";
 
 // Generate JWT Token
 const generateToken = (userId, role) => {
@@ -11,7 +11,7 @@ const generateToken = (userId, role) => {
 };
 
 // Register User
-exports.register = async (req, res) => {
+export const register = async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
 
@@ -59,13 +59,13 @@ exports.register = async (req, res) => {
 };
 
 // Login User
-exports.login = async (req, res) => {
+export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
     // Find user and include password for comparison
     const user = await User.findOne({ email }).select("+password");
-    
+
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -75,7 +75,7 @@ exports.login = async (req, res) => {
 
     // Check password
     const isPasswordValid = await user.comparePassword(password);
-    
+
     if (!isPasswordValid) {
       return res.status(401).json({
         success: false,
@@ -110,7 +110,7 @@ exports.login = async (req, res) => {
 };
 
 // Get Current User (Protected Route)
-exports.getMe = async (req, res) => {
+export const getMe = async (req, res) => {
   try {
     const user = await User.findById(req.user.userId);
 
@@ -145,7 +145,7 @@ exports.getMe = async (req, res) => {
 };
 
 // Verify User (Admin only)
-exports.verifyUser = async (req, res) => {
+export const verifyUser = async (req, res) => {
   try {
     const { userId } = req.params;
     const adminId = req.user.userId;
@@ -205,7 +205,7 @@ exports.verifyUser = async (req, res) => {
 };
 
 // Get All Users (Admin and compliance officers)
-exports.getAllUsers = async (req, res) => {
+export const getAllUsers = async (req, res) => {
   try {
     const adminId = req.user.userId;
 

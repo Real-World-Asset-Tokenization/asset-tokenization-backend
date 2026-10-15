@@ -1,4 +1,4 @@
-const mongoose = require("mongoose");
+import mongoose from "mongoose";
 
 const kycSchema = new mongoose.Schema({
   userId: {
@@ -120,4 +120,4 @@ const kycSchema = new mongoose.Schema({
   },
 });
 
-module.exports = mongoose.model("KYC", kycSchema);
+export default mongoose.model("KYC", kycSchema);

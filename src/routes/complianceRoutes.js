@@ -1,12 +1,12 @@
-const express = require("express");
-const { body, validationResult } = require("express-validator");
-const {
+import express from "express";
+import { body, validationResult } from "express-validator";
+import {
   runComplianceCheck,
   getComplianceReport,
   manualReview,
   getAllComplianceRecords,
-} = require("../controllers/complianceController");
-const { protect } = require("../middleware/auth");
+} from "../controllers/complianceController.js";
+import { protect } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -52,4 +52,4 @@ router.post(
 
 router.get("/records", protect, getAllComplianceRecords);
 
-module.exports = router;
+export default router;

@@ -1,4 +1,4 @@
-const mongoose = require("mongoose");
+import mongoose from "mongoose";
 
 const documentHashSchema = new mongoose.Schema({
   hash: {
@@ -26,4 +26,4 @@ const documentHashSchema = new mongoose.Schema({
 // Index for faster duplicate queries
 documentHashSchema.index({ hash: 1, uploadDate: -1 });
 
-module.exports = mongoose.model("DocumentHash", documentHashSchema);
+export default mongoose.model("DocumentHash", documentHashSchema);
