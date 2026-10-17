@@ -15,7 +15,7 @@ export async function connectDB() {
       serverSelectionTimeoutMS: 4000,
     });
     isConnected = true;
-    console.log("✔ [MongoDB] Connected successfully to MongoDB Atlas.");
+    console.log("✔ [MongoDB] Connected successfully to Azure Cosmos DB.");
     return true;
   } catch (err) {
     console.warn("⚠ [MongoDB] Connection error:", err.message);
