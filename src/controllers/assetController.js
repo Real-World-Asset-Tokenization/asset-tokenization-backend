@@ -9,6 +9,7 @@ import { Asset } from "../models/Asset.js";
 import User from "../models/User.js";
 import DocumentHash from "../models/DocumentHash.js";
 import aiService from "../services/aiService.js";
+import blockchainService from "../services/blockchainService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -516,6 +517,53 @@ export async function updateVerificationStatus(req, res) {
         : undefined;
 
     await asset.save();
+
+    // If approved, trigger blockchain tokenization
+    if (verificationStatus === "approved") {
+      try {
+        console.log(`[Blockchain] Initiating tokenization for asset ${assetId}`);
+
+        // Prepare asset data for blockchain
+        const assetData = {
+          name: asset.assetName || asset.name,
+          symbol: asset.symbol,
+          metadataURI: asset.metadataURI,
+          documentHash: asset.documentHash,
+          valuationLKR: asset.valuationLKR || asset.valuation,
+          totalShares: asset.totalShares
+        };
+
+        // Get issuer wallet address
+        const issuerAddress = asset.issuerWallet || "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // Default to first Hardhat account
+
+        // Trigger full tokenization flow
+        const tokenizationResult = await blockchainService.fullTokenizationFlow(
+          assetData,
+          issuerAddress
+        );
+
+        if (tokenizationResult.success) {
+          console.log(`[Blockchain] Asset ${assetId} tokenized successfully`);
+          console.log(`[Blockchain] Asset ID on chain: ${tokenizationResult.assetId}`);
+          console.log(`[Blockchain] Register TX: ${tokenizationResult.registerTxHash}`);
+          console.log(`[Blockchain] Approve TX: ${tokenizationResult.approveTxHash}`);
+          console.log(`[Blockchain] Tokenize TX: ${tokenizationResult.tokenizeTxHash}`);
+
+          // Update asset with blockchain data
+          asset.blockchainAssetId = tokenizationResult.assetId;
+          asset.status = "Tokenized";
+          asset.txHash = tokenizationResult.tokenizeTxHash;
+          asset.tokenizedAt = new Date();
+          await asset.save();
+        } else {
+          console.error(`[Blockchain] Tokenization failed for asset ${assetId}:`, tokenizationResult.error);
+          // Note: We don't fail the approval if blockchain fails, but log the error
+        }
+      } catch (blockchainError) {
+        console.error(`[Blockchain] Error during tokenization for asset ${assetId}:`, blockchainError);
+        // Note: We don't fail the approval if blockchain fails, but log the error
+      }
+    }
 
     return res.json({
       success: true,
