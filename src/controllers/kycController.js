@@ -64,6 +64,9 @@ export const uploadDocument = async (req, res) => {
     try {
       // Resolve image path (local file or remote URL)
       const getImagePath = async (imageUrl, fileName) => {
+        if (!imageUrl) {
+          throw new Error("Image URL is undefined");
+        }
         if (imageUrl.match(/^[A-Za-z]:\\/)) {
           if (!fs.existsSync(imageUrl)) {
             throw new Error(`Local file not found: ${imageUrl}`);
@@ -82,7 +85,7 @@ export const uploadDocument = async (req, res) => {
       };
 
       documentPath = await getImagePath(
-        req.file.cloudinaryUrl,
+        req.file.path,
         `doc_${userId}_${Date.now()}.jpg`
       );
 
@@ -98,8 +101,10 @@ export const uploadDocument = async (req, res) => {
       const extractedIdNumber = ocrResult?.data?.idNumber;
 
       if (!extractedIdNumber) {
-        // OCR failed to extract ID number - delete Cloudinary image and reject
-        await deleteFromCloudinary(req.file.publicId);
+        // OCR failed to extract ID number - delete local file and reject
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
         return res.status(400).json({
           success: false,
           message: "Failed to extract ID number from document. Please ensure the image is clear and readable.",
@@ -112,8 +117,10 @@ export const uploadDocument = async (req, res) => {
 
       // Compare entered ID with OCR-extracted ID
       if (normalizedEnteredId !== normalizedExtractedId) {
-        // ID number mismatch - delete Cloudinary image and reject
-        await deleteFromCloudinary(req.file.publicId);
+        // ID number mismatch - delete local file and reject
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
         return res.status(400).json({
           success: false,
           message: "The ID number entered does not match the ID number extracted from the document. Please verify and try again.",
@@ -127,8 +134,10 @@ export const uploadDocument = async (req, res) => {
       // Check if ID number already exists in database
       const existingIdNumber = await KYC.findOne({ idNumber: normalizedEnteredId });
       if (existingIdNumber) {
-        // ID number already registered - delete Cloudinary image and reject
-        await deleteFromCloudinary(req.file.publicId);
+        // ID number already registered - delete local file and reject
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
         return res.status(400).json({
           success: false,
           message: "This ID number is already registered in the system. Each ID can only be used once.",
@@ -140,8 +149,8 @@ export const uploadDocument = async (req, res) => {
         userId,
         idType,
         idNumber: normalizedEnteredId,
-        documentImage: req.file.cloudinaryUrl,
-        documentImagePublicId: req.file.publicId,
+        documentImage: req.file.path,
+        documentImagePublicId: req.file.filename,
         verificationStatus: "pending",
       });
 
@@ -161,8 +170,10 @@ export const uploadDocument = async (req, res) => {
       if (documentPath && fs.existsSync(documentPath) && documentPath.startsWith(tempDir)) {
         fs.unlinkSync(documentPath);
       }
-      // Delete Cloudinary image if validation failed
-      await deleteFromCloudinary(req.file.publicId);
+      // Delete local file if validation failed
+      if (req.file && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
       throw validationError;
     }
   } catch (error) {
@@ -196,9 +207,9 @@ export const uploadSelfie = async (req, res) => {
       });
     }
 
-    // Update selfie with Cloudinary URL
-    kyc.selfie = req.file.cloudinaryUrl;
-    kyc.selfiePublicId = req.file.publicId;
+    // Update selfie with local file path
+    kyc.selfie = req.file.path;
+    kyc.selfiePublicId = req.file.filename;
     kyc.verificationStatus = "under_review";
     await kyc.save();
 
@@ -250,6 +261,9 @@ export const verifyKYC = async (req, res) => {
 
     // Helper to resolve image path (local file or remote URL)
     const getImagePath = async (imageUrl, fileName) => {
+      if (!imageUrl) {
+        throw new Error("Image URL is undefined");
+      }
       if (imageUrl.match(/^[A-Za-z]:\\/)) {
         if (!fs.existsSync(imageUrl)) {
           throw new Error(`Local file not found: ${imageUrl}`);
@@ -540,6 +554,9 @@ export const adminVerifyKYC = async (req, res) => {
 
     // Helper to resolve image path (local file or remote URL)
     const getImagePath = async (imageUrl, fileName) => {
+      if (!imageUrl) {
+        throw new Error("Image URL is undefined");
+      }
       if (imageUrl.match(/^[A-Za-z]:\\/)) {
         if (!fs.existsSync(imageUrl)) {
           throw new Error(`Local file not found: ${imageUrl}`);
@@ -787,8 +804,17 @@ export const pipelineVerify = async (req, res) => {
 
     let documentPath, selfiePath;
 
-    // Helper to download image from URL
+    // Helper to download image from URL or use local file path
     const downloadImage = async (imageUrl, fileName) => {
+      // Check if it's a local file path (Windows or Unix)
+      if (imageUrl.match(/^[A-Za-z]:\\/) || imageUrl.startsWith('/')) {
+        if (!fs.existsSync(imageUrl)) {
+          throw new Error(`Local file not found: ${imageUrl}`);
+        }
+        return imageUrl; // Return the local path directly
+      }
+
+      // Otherwise, download from URL
       const downloadPath = path.join(tempDir, fileName);
       const response = await axios({ method: "get", url: imageUrl, responseType: "stream" });
       const writer = fs.createWriteStream(downloadPath);
@@ -812,7 +838,7 @@ export const pipelineVerify = async (req, res) => {
       );
 
       // Send to AI service
-      const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:5001';
+      const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:5002';
       const formData = new FormData();
       formData.append('document', fs.createReadStream(documentPath));
       formData.append('selfie', fs.createReadStream(selfiePath));
@@ -826,10 +852,14 @@ export const pipelineVerify = async (req, res) => {
         }
       );
 
-      // Clean up temp files
+      // Clean up temp files (only delete downloaded files, not original local files)
       try {
-        fs.unlinkSync(documentPath);
-        fs.unlinkSync(selfiePath);
+        if (documentPath.startsWith(tempDir)) {
+          fs.unlinkSync(documentPath);
+        }
+        if (selfiePath.startsWith(tempDir)) {
+          fs.unlinkSync(selfiePath);
+        }
       } catch (cleanupError) {
         console.error("Cleanup error:", cleanupError);
       }

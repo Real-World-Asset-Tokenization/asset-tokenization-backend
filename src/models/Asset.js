@@ -142,6 +142,14 @@ const assetSchema = new mongoose.Schema({
   },
 
   // ==========================================
+  // BLOCKCHAIN INTEGRATION FIELDS
+  // ==========================================
+  blockchainAssetId: {
+    type: Number,
+    default: null,
+  },
+
+  // ==========================================
   // 5. DOCUMENT UPLOADS
   // ==========================================
 
