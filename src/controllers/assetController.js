@@ -56,8 +56,8 @@ export async function uploadAsset(req, res) {
 
       if (file) {
         documents[field] = {
-          url: file.cloudinaryUrl,
-          publicId: file.publicId,
+          url: file.path,
+          publicId: file.filename,
         };
       }
     }
@@ -68,8 +68,8 @@ export async function uploadAsset(req, res) {
 
     if (legacyFile && !documents.deed) {
       documents.deed = {
-        url: legacyFile.cloudinaryUrl,
-        publicId: legacyFile.publicId,
+        url: legacyFile.path,
+        publicId: legacyFile.filename,
       };
     }
 
@@ -80,27 +80,33 @@ export async function uploadAsset(req, res) {
       });
     }
 
+    // Generate required fields with defaults
+    const assetIdNumber = Date.now() % 1000000; // Simple numeric ID
+    const totalSharesVal = Number(req.body.totalShares) || 1;
+    const valuationNum = Number(valuation) || 0;
+    const sharePrice = totalSharesVal > 0 ? valuationNum / totalSharesVal : 0;
+
     const asset = await AssetModel.create({
+      assetId: assetIdNumber,
       ownerId: userId,
       assetName,
       name: assetName,
       assetType,
       propertyType: assetType,
-      location: req.body.location || "",
+      location: req.body.location || "Unknown",
       document: documents.deed.url,
       documentPublicId: documents.deed.publicId,
       documents,
-      valuation: Number(valuation),
-      valuationLKR:
-        currency === "LKR" ? Number(valuation) : 0,
+      valuation: valuationNum,
+      valuationLKR: valuationNum,
       currency: currency || "LKR",
       verificationStatus: "pending",
       status: "Pending",
-      issuerWallet: req.body.issuerWallet || "",
-      symbol: req.body.symbol || "",
-      totalShares: Number(req.body.totalShares) || 1,
-      sharePriceLKR: Number(req.body.sharePriceLKR) || 0,
-      metadataURI: req.body.metadataURI || "",
+      issuerWallet: req.body.issuerWallet || "0x0000000000000000000000000000000000000000",
+      symbol: req.body.symbol || assetName.substring(0, 4).toUpperCase(),
+      totalShares: totalSharesVal,
+      sharePriceLKR: sharePrice,
+      metadataURI: req.body.metadataURI || `ipfs://placeholder-${assetIdNumber}`,
       documentHash:
         "0x" +
         crypto
@@ -195,23 +201,34 @@ export async function verifyAsset(req, res) {
     const filename = `asset_${asset._id}_${Date.now()}.pdf`;
     documentPath = path.join(tempDir, filename);
 
-    // Download only from trusted document storage.
-    // In production, validate the storage hostname and file size.
-    if (!documentUrl.startsWith("https://")) {
-      return res.status(400).json({
-        success: false,
-        message: "A secure HTTPS document URL is required",
+    // Check if it's a local file path (Windows or Unix)
+    if (documentUrl.match(/^[A-Za-z]:\\/) || documentUrl.startsWith('/')) {
+      if (!fs.existsSync(documentUrl)) {
+        return res.status(400).json({
+          success: false,
+          message: "Local document file not found",
+        });
+      }
+      // Use the local file directly
+      documentPath = documentUrl;
+    } else {
+      // Download from HTTPS URL
+      if (!documentUrl.startsWith("https://")) {
+        return res.status(400).json({
+          success: false,
+          message: "A secure HTTPS document URL is required",
+        });
+      }
+
+      const response = await axios.get(documentUrl, {
+        responseType: "arraybuffer",
+        timeout: 30000,
+        maxContentLength: 15 * 1024 * 1024,
+        maxBodyLength: 15 * 1024 * 1024,
       });
+
+      fs.writeFileSync(documentPath, response.data);
     }
-
-    const response = await axios.get(documentUrl, {
-      responseType: "arraybuffer",
-      timeout: 30000,
-      maxContentLength: 15 * 1024 * 1024,
-      maxBodyLength: 15 * 1024 * 1024,
-    });
-
-    fs.writeFileSync(documentPath, response.data);
 
     const pipelineResult =
       await aiService.runAssetDocumentPipeline(documentPath);
@@ -249,7 +266,8 @@ export async function verifyAsset(req, res) {
       error: error.message,
     });
   } finally {
-    if (documentPath && fs.existsSync(documentPath)) {
+    // Only delete if it's a temp file (not the original local file)
+    if (documentPath && fs.existsSync(documentPath) && documentPath.startsWith(tempDir)) {
       fs.unlinkSync(documentPath);
     }
   }
