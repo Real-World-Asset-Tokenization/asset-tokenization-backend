@@ -9,6 +9,7 @@ import { Asset } from "../models/Asset.js";
 import User from "../models/User.js";
 import DocumentHash from "../models/DocumentHash.js";
 import aiService from "../services/aiService.js";
+import blockchainService from "../services/blockchainService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -56,8 +57,8 @@ export async function uploadAsset(req, res) {
 
       if (file) {
         documents[field] = {
-          url: file.cloudinaryUrl,
-          publicId: file.publicId,
+          url: file.path,
+          publicId: file.filename,
         };
       }
     }
@@ -68,8 +69,8 @@ export async function uploadAsset(req, res) {
 
     if (legacyFile && !documents.deed) {
       documents.deed = {
-        url: legacyFile.cloudinaryUrl,
-        publicId: legacyFile.publicId,
+        url: legacyFile.path,
+        publicId: legacyFile.filename,
       };
     }
 
@@ -80,27 +81,33 @@ export async function uploadAsset(req, res) {
       });
     }
 
+    // Generate required fields with defaults
+    const assetIdNumber = Date.now() % 1000000; // Simple numeric ID
+    const totalSharesVal = Number(req.body.totalShares) || 1;
+    const valuationNum = Number(valuation) || 0;
+    const sharePrice = totalSharesVal > 0 ? valuationNum / totalSharesVal : 0;
+
     const asset = await AssetModel.create({
+      assetId: assetIdNumber,
       ownerId: userId,
       assetName,
       name: assetName,
       assetType,
       propertyType: assetType,
-      location: req.body.location || "",
+      location: req.body.location || "Unknown",
       document: documents.deed.url,
       documentPublicId: documents.deed.publicId,
       documents,
-      valuation: Number(valuation),
-      valuationLKR:
-        currency === "LKR" ? Number(valuation) : 0,
+      valuation: valuationNum,
+      valuationLKR: valuationNum,
       currency: currency || "LKR",
       verificationStatus: "pending",
       status: "Pending",
-      issuerWallet: req.body.issuerWallet || "",
-      symbol: req.body.symbol || "",
-      totalShares: Number(req.body.totalShares) || 1,
-      sharePriceLKR: Number(req.body.sharePriceLKR) || 0,
-      metadataURI: req.body.metadataURI || "",
+      issuerWallet: req.body.issuerWallet || "0x0000000000000000000000000000000000000000",
+      symbol: req.body.symbol || assetName.substring(0, 4).toUpperCase(),
+      totalShares: totalSharesVal,
+      sharePriceLKR: sharePrice,
+      metadataURI: req.body.metadataURI || `ipfs://placeholder-${assetIdNumber}`,
       documentHash:
         "0x" +
         crypto
@@ -195,23 +202,34 @@ export async function verifyAsset(req, res) {
     const filename = `asset_${asset._id}_${Date.now()}.pdf`;
     documentPath = path.join(tempDir, filename);
 
-    // Download only from trusted document storage.
-    // In production, validate the storage hostname and file size.
-    if (!documentUrl.startsWith("https://")) {
-      return res.status(400).json({
-        success: false,
-        message: "A secure HTTPS document URL is required",
+    // Check if it's a local file path (Windows or Unix)
+    if (documentUrl.match(/^[A-Za-z]:\\/) || documentUrl.startsWith('/')) {
+      if (!fs.existsSync(documentUrl)) {
+        return res.status(400).json({
+          success: false,
+          message: "Local document file not found",
+        });
+      }
+      // Use the local file directly
+      documentPath = documentUrl;
+    } else {
+      // Download from HTTPS URL
+      if (!documentUrl.startsWith("https://")) {
+        return res.status(400).json({
+          success: false,
+          message: "A secure HTTPS document URL is required",
+        });
+      }
+
+      const response = await axios.get(documentUrl, {
+        responseType: "arraybuffer",
+        timeout: 30000,
+        maxContentLength: 15 * 1024 * 1024,
+        maxBodyLength: 15 * 1024 * 1024,
       });
+
+      fs.writeFileSync(documentPath, response.data);
     }
-
-    const response = await axios.get(documentUrl, {
-      responseType: "arraybuffer",
-      timeout: 30000,
-      maxContentLength: 15 * 1024 * 1024,
-      maxBodyLength: 15 * 1024 * 1024,
-    });
-
-    fs.writeFileSync(documentPath, response.data);
 
     const pipelineResult =
       await aiService.runAssetDocumentPipeline(documentPath);
@@ -249,7 +267,8 @@ export async function verifyAsset(req, res) {
       error: error.message,
     });
   } finally {
-    if (documentPath && fs.existsSync(documentPath)) {
+    // Only delete if it's a temp file (not the original local file)
+    if (documentPath && fs.existsSync(documentPath) && documentPath.startsWith(tempDir)) {
       fs.unlinkSync(documentPath);
     }
   }
@@ -498,6 +517,53 @@ export async function updateVerificationStatus(req, res) {
         : undefined;
 
     await asset.save();
+
+    // If approved, trigger blockchain tokenization
+    if (verificationStatus === "approved") {
+      try {
+        console.log(`[Blockchain] Initiating tokenization for asset ${assetId}`);
+
+        // Prepare asset data for blockchain
+        const assetData = {
+          name: asset.assetName || asset.name,
+          symbol: asset.symbol,
+          metadataURI: asset.metadataURI,
+          documentHash: asset.documentHash,
+          valuationLKR: asset.valuationLKR || asset.valuation,
+          totalShares: asset.totalShares
+        };
+
+        // Get issuer wallet address
+        const issuerAddress = asset.issuerWallet || "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // Default to first Hardhat account
+
+        // Trigger full tokenization flow
+        const tokenizationResult = await blockchainService.fullTokenizationFlow(
+          assetData,
+          issuerAddress
+        );
+
+        if (tokenizationResult.success) {
+          console.log(`[Blockchain] Asset ${assetId} tokenized successfully`);
+          console.log(`[Blockchain] Asset ID on chain: ${tokenizationResult.assetId}`);
+          console.log(`[Blockchain] Register TX: ${tokenizationResult.registerTxHash}`);
+          console.log(`[Blockchain] Approve TX: ${tokenizationResult.approveTxHash}`);
+          console.log(`[Blockchain] Tokenize TX: ${tokenizationResult.tokenizeTxHash}`);
+
+          // Update asset with blockchain data
+          asset.blockchainAssetId = tokenizationResult.assetId;
+          asset.status = "Tokenized";
+          asset.txHash = tokenizationResult.tokenizeTxHash;
+          asset.tokenizedAt = new Date();
+          await asset.save();
+        } else {
+          console.error(`[Blockchain] Tokenization failed for asset ${assetId}:`, tokenizationResult.error);
+          // Note: We don't fail the approval if blockchain fails, but log the error
+        }
+      } catch (blockchainError) {
+        console.error(`[Blockchain] Error during tokenization for asset ${assetId}:`, blockchainError);
+        // Note: We don't fail the approval if blockchain fails, but log the error
+      }
+    }
 
     return res.json({
       success: true,
