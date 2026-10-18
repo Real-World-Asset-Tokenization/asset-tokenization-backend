@@ -14,6 +14,22 @@ import blockchainService from "../services/blockchainService.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Helper function to convert local file path to HTTP URL
+const convertToHttpUrl = (filePath) => {
+  if (!filePath) return null;
+  
+  // If it's already an HTTP URL, return as-is
+  if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
+    return filePath;
+  }
+  
+  // Extract filename from local path
+  const filename = path.basename(filePath);
+  
+  // Return HTTP URL
+  return `http://localhost:5001/uploads/${filename}`;
+};
+
 // The merged Asset model registers this Mongoose model.
 // Use it for verification operations requiring populate(),
 // findById(), and document.save().
@@ -57,7 +73,7 @@ export async function uploadAsset(req, res) {
 
       if (file) {
         documents[field] = {
-          url: file.path,
+          url: convertToHttpUrl(file.path),
           publicId: file.filename,
         };
       }
@@ -69,7 +85,7 @@ export async function uploadAsset(req, res) {
 
     if (legacyFile && !documents.deed) {
       documents.deed = {
-        url: legacyFile.path,
+        url: convertToHttpUrl(legacyFile.path),
         publicId: legacyFile.filename,
       };
     }
@@ -212,6 +228,18 @@ export async function verifyAsset(req, res) {
       }
       // Use the local file directly
       documentPath = documentUrl;
+    } else if (documentUrl.startsWith('http://localhost') || documentUrl.startsWith('http://127.0.0.1')) {
+      // Convert HTTP URL to local file path
+      const filename = path.basename(documentUrl);
+      const localPath = path.join(__dirname, '../../uploads', filename);
+      
+      if (!fs.existsSync(localPath)) {
+        return res.status(400).json({
+          success: false,
+          message: "Local document file not found",
+        });
+      }
+      documentPath = localPath;
     } else {
       // Download from HTTPS URL
       if (!documentUrl.startsWith("https://")) {
@@ -339,15 +367,29 @@ export async function getUserAssets(req, res) {
     return res.json({
       success: true,
       data: {
-        assets: assets.map((asset) => ({
-          assetId: asset._id,
-          assetName: asset.assetName,
-          assetType: asset.assetType,
-          valuation: asset.valuation,
-          currency: asset.currency,
-          verificationStatus: asset.verificationStatus,
-          createdAt: asset.createdAt,
-        })),
+        assets: assets.map((asset) => {
+          const assetObj = asset.toObject();
+          
+          // Convert document URLs to HTTP URLs
+          if (assetObj.documents) {
+            for (const key in assetObj.documents) {
+              if (assetObj.documents[key]?.url) {
+                assetObj.documents[key].url = convertToHttpUrl(assetObj.documents[key].url);
+              }
+            }
+          }
+          
+          return {
+            assetId: asset._id,
+            assetName: asset.assetName,
+            assetType: asset.assetType,
+            valuation: asset.valuation,
+            currency: asset.currency,
+            verificationStatus: asset.verificationStatus,
+            documents: assetObj.documents,
+            createdAt: asset.createdAt,
+          };
+        }),
         count: assets.length,
       },
     });
@@ -373,29 +415,42 @@ export async function getAllAssets(req, res) {
     return res.json({
       success: true,
       data: {
-        assets: assets.map((asset) => ({
-          assetId: asset._id,
-          assetName: asset.assetName,
-          assetType: asset.assetType,
-          valuation: asset.valuation,
-          currency: asset.currency,
-          verificationStatus: asset.verificationStatus,
-          documents: asset.documents,
-          documentAuthentic: asset.documentAuthentic,
-          ownershipVerified: asset.ownershipVerified,
-          ocrData: asset.ocrData,
-          rejectionReason: asset.rejectionReason,
-          createdAt: asset.createdAt,
-          verifiedAt: asset.verifiedAt,
-          owner: asset.ownerId
-            ? {
-                id: asset.ownerId._id,
-                name: asset.ownerId.name,
-                email: asset.ownerId.email,
-                role: asset.ownerId.role,
+        assets: assets.map((asset) => {
+          const assetObj = asset.toObject();
+          
+          // Convert document URLs to HTTP URLs
+          if (assetObj.documents) {
+            for (const key in assetObj.documents) {
+              if (assetObj.documents[key]?.url) {
+                assetObj.documents[key].url = convertToHttpUrl(assetObj.documents[key].url);
               }
-            : null,
-        })),
+            }
+          }
+          
+          return {
+            assetId: asset._id,
+            assetName: asset.assetName,
+            assetType: asset.assetType,
+            valuation: asset.valuation,
+            currency: asset.currency,
+            verificationStatus: asset.verificationStatus,
+            documents: assetObj.documents,
+            documentAuthentic: asset.documentAuthentic,
+            ownershipVerified: asset.ownershipVerified,
+            ocrData: asset.ocrData,
+            rejectionReason: asset.rejectionReason,
+            createdAt: asset.createdAt,
+            verifiedAt: asset.verifiedAt,
+            owner: asset.ownerId
+              ? {
+                  id: asset.ownerId._id,
+                  name: asset.ownerId.name,
+                  email: asset.ownerId.email,
+                  role: asset.ownerId.role,
+                }
+              : null,
+          };
+        }),
         count: assets.length,
       },
     });
@@ -433,10 +488,23 @@ export async function getAssetDetails(req, res) {
       });
     }
 
+    // Convert document URLs to HTTP URLs for frontend access
+    const assetWithHttpUrls = asset.toObject();
+    if (assetWithHttpUrls.documents) {
+      for (const key in assetWithHttpUrls.documents) {
+        if (assetWithHttpUrls.documents[key]?.url) {
+          assetWithHttpUrls.documents[key].url = convertToHttpUrl(assetWithHttpUrls.documents[key].url);
+        }
+      }
+    }
+    if (assetWithHttpUrls.document) {
+      assetWithHttpUrls.document = convertToHttpUrl(assetWithHttpUrls.document);
+    }
+
     return res.json({
       success: true,
       data: {
-        asset,
+        asset: assetWithHttpUrls,
         owner: asset.ownerId
           ? {
               id: asset.ownerId._id,

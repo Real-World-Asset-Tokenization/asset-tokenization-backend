@@ -31,6 +31,9 @@ app.use(
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
+// Serve uploaded files statically
+app.use('/uploads', express.static('uploads'));
+
 app.use(morgan("dev"));
 
 // ==================== API ROUTES ====================
