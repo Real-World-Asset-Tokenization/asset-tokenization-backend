@@ -6,6 +6,7 @@ import {
   getMe,
   verifyUser,
   getAllUsers,
+  updateWallet,
 } from "../controllers/authController.js";
 import { protect } from "../middleware/auth.js";
 
@@ -47,6 +48,20 @@ const registerValidation = [
     .optional()
     .isIn(["investor", "asset_owner", "admin", "compliance_officer"])
     .withMessage("Invalid role"),
+  body("walletAddress")
+    .optional({ nullable: true, checkFalsy: true })
+    .trim()
+    .matches(/^0x[a-fA-F0-9]{40}$/)
+    .withMessage("Invalid Ethereum wallet address format"),
+];
+
+const updateWalletValidation = [
+  body("walletAddress")
+    .trim()
+    .notEmpty()
+    .withMessage("Wallet address is required")
+    .matches(/^0x[a-fA-F0-9]{40}$/)
+    .withMessage("Invalid Ethereum wallet address format"),
 ];
 
 const loginValidation = [
@@ -68,5 +83,6 @@ router.post("/login", loginValidation, validate, login);
 router.get("/me", protect, getMe);
 router.post("/verify/:userId", protect, verifyUser);
 router.get("/users", protect, getAllUsers);
+router.put("/wallet", protect, updateWalletValidation, validate, updateWallet);
 
 export default router;

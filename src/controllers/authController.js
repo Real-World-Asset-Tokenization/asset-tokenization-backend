@@ -13,9 +13,9 @@ const generateToken = (userId, role) => {
 // Register User
 export const register = async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, walletAddress } = req.body;
 
-    // Check if user already exists
+    // Check if user already exists by email
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({
@@ -24,12 +24,33 @@ export const register = async (req, res) => {
       });
     }
 
+    let normalizedWallet = null;
+    if (walletAddress) {
+      normalizedWallet = walletAddress.toLowerCase().trim();
+      if (!/^0x[a-f0-9]{40}$/i.test(normalizedWallet)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid Ethereum wallet address format. Must be a valid 42-character hex address (0x...).",
+        });
+      }
+
+      // Check if wallet address is already linked to another user
+      const existingWalletUser = await User.findOne({ walletAddress: normalizedWallet });
+      if (existingWalletUser) {
+        return res.status(400).json({
+          success: false,
+          message: "This wallet address is already associated with another user account. The same wallet cannot be shared between different users.",
+        });
+      }
+    }
+
     // Create new user
     const user = await User.create({
       name,
       email,
       password,
       role: role || "investor",
+      ...(normalizedWallet ? { walletAddress: normalizedWallet } : {}),
     });
 
     // Generate token
@@ -44,11 +65,18 @@ export const register = async (req, res) => {
           name: user.name,
           email: user.email,
           role: user.role,
+          walletAddress: user.walletAddress || null,
         },
         token,
       },
     });
   } catch (error) {
+    if (error.code === 11000 && error.keyPattern?.walletAddress) {
+      return res.status(400).json({
+        success: false,
+        message: "This wallet address is already linked to another user account. The same wallet cannot be shared between different users.",
+      });
+    }
     console.error("Register error:", error);
     res.status(500).json({
       success: false,
@@ -95,6 +123,7 @@ export const login = async (req, res) => {
           name: user.name,
           email: user.email,
           role: user.role,
+          walletAddress: user.walletAddress || null,
         },
         token,
       },
@@ -130,6 +159,7 @@ export const getMe = async (req, res) => {
           email: user.email,
           role: user.role,
           isVerified: user.isVerified,
+          walletAddress: user.walletAddress || null,
           createdAt: user.createdAt,
         },
       },
@@ -244,3 +274,78 @@ export const getAllUsers = async (req, res) => {
     });
   }
 };
+
+// Update User's Connected Wallet Address
+export const updateWallet = async (req, res) => {
+  try {
+    const { walletAddress } = req.body;
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (!walletAddress || typeof walletAddress !== "string") {
+      return res.status(400).json({
+        success: false,
+        message: "Wallet address is required",
+      });
+    }
+
+    const normalizedWallet = walletAddress.toLowerCase().trim();
+
+    // Validate 42-character Ethereum address format (0x + 40 hex chars)
+    if (!/^0x[a-f0-9]{40}$/i.test(normalizedWallet)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid Ethereum wallet address format. Must be a valid 42-character hex address (0x...).",
+      });
+    }
+
+    // Uniqueness constraint: Ensure no other user has this wallet address
+    const existingUser = await User.findOne({
+      walletAddress: normalizedWallet,
+      _id: { $ne: user._id },
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: "This wallet address is already associated with another user account. The same wallet cannot be shared between different users.",
+      });
+    }
+
+    user.walletAddress = normalizedWallet;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Wallet updated successfully",
+      data: {
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          walletAddress: user.walletAddress,
+        },
+      },
+    });
+  } catch (error) {
+    if (error.code === 11000 && error.keyPattern?.walletAddress) {
+      return res.status(400).json({
+        success: false,
+        message: "This wallet address is already linked to another user account. The same wallet cannot be shared between different users.",
+      });
+    }
+    console.error("Update wallet error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error updating wallet",
+      error: error.message,
+    });
+  }
+};
+

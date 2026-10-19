@@ -475,7 +475,7 @@ export const updateKYCStatus = async (req, res) => {
 
     // Update KYC status
     kyc.verificationStatus = verificationStatus;
-    
+
     if (verificationStatus === "approved") {
       kyc.verifiedAt = new Date();
       kyc.rejectionReason = undefined;
@@ -880,11 +880,11 @@ export const pipelineVerify = async (req, res) => {
     }
   } catch (error) {
     console.error("Pipeline verify error:", error);
-    
+
     if (error.response) {
       return res.status(error.response.status).json(error.response.data);
     }
-    
+
     return res.status(500).json({
       success: false,
       message: "Error running pipeline verification",

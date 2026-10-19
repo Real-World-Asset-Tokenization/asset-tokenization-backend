@@ -531,6 +531,14 @@ export const Asset = {
     };
   },
 
+  async findOneAndUpdate(query, update, options = { new: true }) {
+    if (isDbConnected()) {
+      return MongoAsset.findOneAndUpdate(query, update, options);
+    }
+    await this.updateOne(query, update);
+    return this.findOne(query);
+  },
+
   async countDocuments(filter = {}) {
     if (isDbConnected()) {
       return MongoAsset.countDocuments(filter);

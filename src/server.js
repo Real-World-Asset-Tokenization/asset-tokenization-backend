@@ -9,6 +9,11 @@ import authRoutes from "./routes/authRoutes.js";
 import kycRoutes from "./routes/kycRoutes.js";
 import assetRoutes from "./routes/assetRoutes.js";
 import complianceRoutes from "./routes/complianceRoutes.js";
+import marketplaceRoutes from "./routes/marketplaceRoutes.js";
+import profitRoutes from "./routes/profitRoutes.js";
+import distributionRoutes from "./routes/distributionRoutes.js";
+import gasRoutes from "./routes/gasRoutes.js";
+import tokenizationRoutes from "./routes/tokenizationRoutes.js";
 
 import { pipelineVerify } from "./controllers/kycController.js";
 import { protect } from "./middleware/auth.js";
@@ -22,9 +27,22 @@ const PORT = process.env.PORT || 5001;
 
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "*",
-    methods: ["GET", "POST", "PATCH", "PUT", "DELETE"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (
+        origin === "http://localhost:5173" ||
+        origin === "http://127.0.0.1:5173" ||
+        origin === process.env.FRONTEND_URL ||
+        /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+      ) {
+        return callback(null, true);
+      }
+      return callback(null, true);
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+    optionsSuccessStatus: 200,
   })
 );
 
@@ -47,6 +65,21 @@ app.use("/api/assets", assetRoutes);
 // Compliance and administrative operations
 app.use("/api/compliance", complianceRoutes);
 
+// Token Marketplace & secondary peer-to-peer trading
+app.use("/api/marketplace", marketplaceRoutes);
+
+// Financial reports & time-weighted profit calculation
+app.use("/api/profit", profitRoutes);
+
+// Merkle-based dividend distribution rounds & investor claims
+app.use("/api/distribution", distributionRoutes);
+
+// Gas analytics, fee monitoring & research benchmarks
+app.use("/api/gas", gasRoutes);
+
+// Owner-initiated tokenization module (Dual-Price Model, preview, verification, Azure reconciliation)
+app.use("/api/tokenization", tokenizationRoutes);
+
 // AI document verification pipeline
 app.post("/api/pipeline/verify", protect, pipelineVerify);
 
@@ -65,8 +98,8 @@ app.get("/api/health", (req, res) => {
     status: isDbConnected() ? "online" : "degraded",
     service: "Asset Tokenization Backend API",
     database: isDbConnected()
-      ? "MongoDB Atlas (Connected)"
-      : "MongoDB Disconnected",
+      ? "Azure Cosmos DB for MongoDB API (Connected)"
+      : "Azure Cosmos DB Disconnected (In-Memory Fallback Active)",
     timestamp: new Date().toISOString(),
   });
 });

@@ -13,6 +13,7 @@ import {
   getAllAssets,
   getAssetDetails,
   updateVerificationStatus,
+  tokenizeAsset,
 } from "../controllers/assetController.js";
 
 import {
@@ -139,7 +140,16 @@ const getBlockchainContext = async (withSigner = false) => {
     signer || provider
   );
 
-  return { provider, signer, tokenContract };
+  const paymentTokenInfo = deployedData.contracts?.MockPaymentToken;
+  const paymentTokenContract = paymentTokenInfo
+    ? new ethers.Contract(
+        paymentTokenInfo.address,
+        paymentTokenInfo.abi,
+        signer || provider
+      )
+    : null;
+
+  return { provider, signer, tokenContract, paymentTokenContract };
 };
 
 // ==========================================
@@ -172,6 +182,10 @@ router.get("/status/:assetId", protect, getAssetStatus);
 
 // Get assets belonging to the authenticated user
 router.get("/my-assets", protect, getUserAssets);
+
+// Tokenize asset on blockchain (mint fractional ERC-1155 tokens)
+router.post("/:assetId/tokenize", protect, tokenizeAsset);
+router.post("/tokenize/:assetId", protect, tokenizeAsset);
 
 // ==========================================
 // 2. COMPLIANCE OFFICER / ADMIN ROUTES
@@ -223,7 +237,7 @@ router.post("/faucet", protect, async (req, res) => {
       });
     }
 
-    const { provider, signer, tokenContract } =
+    const { provider, signer, tokenContract, paymentTokenContract } =
       await getBlockchainContext(true);
 
     // Send test ETH to the requested wallet
@@ -235,6 +249,21 @@ router.post("/faucet", protect, async (req, res) => {
     await ethTx.wait();
 
     let tokenTxHash = "";
+    let musdTxHash = "";
+
+    // Mint 10,000 mUSD payment liquidity to the requested wallet
+    if (paymentTokenContract) {
+      try {
+        const mTx = await paymentTokenContract.mint(
+          address,
+          ethers.parseUnits("10000", 6)
+        );
+        const mReceipt = await mTx.wait();
+        musdTxHash = mReceipt.hash;
+      } catch (mErr) {
+        console.warn("mUSD mint warning in faucet:", mErr.message);
+      }
+    }
 
     // Issue test property tokens if the deployer has enough
     if (
@@ -261,8 +290,9 @@ router.post("/faucet", protect, async (req, res) => {
 
     return res.json({
       success: true,
-      message: "Development faucet completed",
+      message: "Development faucet completed: Funded 1,000 ETH, 10,000 mUSD & property tokens",
       ethTxHash: ethTx.hash,
+      musdTxHash,
       tokenTxHash,
     });
   } catch (error) {

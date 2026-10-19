@@ -103,7 +103,7 @@ export async function uploadAsset(req, res) {
       currency: currency || "LKR",
       verificationStatus: "pending",
       status: "Pending",
-      issuerWallet: req.body.issuerWallet || "0x0000000000000000000000000000000000000000",
+      issuerWallet: req.body.issuerWallet || user.walletAddress || "0x0000000000000000000000000000000000000000",
       symbol: req.body.symbol || assetName.substring(0, 4).toUpperCase(),
       totalShares: totalSharesVal,
       sharePriceLKR: sharePrice,
@@ -332,8 +332,12 @@ export async function getAssetStatus(req, res) {
 // ==========================================
 export async function getUserAssets(req, res) {
   try {
+    const userId = req.user.userId || req.user._id;
     const assets = await AssetModel.find({
-      ownerId: req.user.userId,
+      $or: [
+        { ownerId: userId },
+        { userId: userId }
+      ]
     }).sort({ createdAt: -1 });
 
     return res.json({
@@ -341,12 +345,26 @@ export async function getUserAssets(req, res) {
       data: {
         assets: assets.map((asset) => ({
           assetId: asset._id,
-          assetName: asset.assetName,
+          assetName: asset.assetName || asset.name,
+          symbol: asset.symbol || `RWA-${asset._id.toString().slice(-4).toUpperCase()}`,
           assetType: asset.assetType,
-          valuation: asset.valuation,
-          currency: asset.currency,
+          valuation: asset.valuationLKR || asset.valuation,
+          currency: asset.currency || "LKR",
           verificationStatus: asset.verificationStatus,
+          status: asset.status || (asset.blockchainAssetId ? "Tokenized" : asset.verificationStatus === "approved" ? "Approved" : "Pending"),
+          tokenized: asset.status === "Tokenized" || Boolean(asset.blockchainAssetId),
+          blockchainAssetId: asset.blockchainAssetId,
+          blockchainTokenId: asset.blockchainAssetId,
+          totalShares: asset.totalShares || 1000,
+          documentHash: asset.documentHash,
+          metadataURI: asset.metadataURI,
+          documentAuthentic: asset.documentAuthentic !== false,
+          ownershipVerified: Boolean(asset.ownershipVerified),
+          riskScore: asset.riskScore || 15,
+          txHash: asset.txHash,
+          issuerWallet: asset.issuerWallet,
           createdAt: asset.createdAt,
+          tokenizedAt: asset.tokenizedAt,
         })),
         count: assets.length,
       },
@@ -586,6 +604,121 @@ export async function updateVerificationStatus(req, res) {
 }
 
 // ==========================================
+// 7B. TOKENIZE ASSET ON BLOCKCHAIN (ASSET OWNER / ADMIN)
+// ==========================================
+export async function tokenizeAsset(req, res) {
+  try {
+    const { assetId } = req.params;
+    const { recipientAddress } = req.body;
+
+    console.log(`[Tokenize] Received tokenization request for asset ID: ${assetId}`);
+
+    let asset = null;
+    if (mongoose.isValidObjectId(assetId)) {
+      asset = await AssetModel.findById(assetId);
+    }
+    if (!asset) {
+      asset = await AssetModel.findOne({
+        $or: [
+          { assetId: Number(assetId) || -1 },
+          { blockchainAssetId: Number(assetId) || -1 }
+        ]
+      });
+    }
+
+    // Default recipient fallback
+    const recipient =
+      recipientAddress ||
+      asset?.issuerWallet ||
+      req.user?.walletAddress ||
+      "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"; // Hardhat test account 1
+
+    if (asset && asset.status === "Tokenized" && asset.blockchainAssetId) {
+      return res.json({
+        success: true,
+        message: "Asset is already tokenized on blockchain",
+        data: {
+          assetId: asset._id,
+          blockchainAssetId: asset.blockchainAssetId,
+          totalShares: asset.totalShares || 1000,
+          recipient: asset.issuerWallet || recipient,
+          txHash: asset.txHash,
+          status: "Tokenized"
+        }
+      });
+    }
+
+    // Prepare asset parameters for blockchain
+    const assetData = {
+      name: asset?.assetName || asset?.name || `Tokenized Asset #${assetId}`,
+      symbol: asset?.symbol || `RWA-${Math.floor(Math.random() * 900 + 100)}`,
+      metadataURI: asset?.metadataURI || `ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/asset-${assetId}.json`,
+      documentHash: asset?.documentHash || ("0x" + crypto.createHash("sha256").update(String(assetId) + Date.now()).digest("hex")),
+      valuationLKR: asset?.valuationLKR || asset?.valuation || 10000000,
+      totalShares: asset?.totalShares || 1000
+    };
+
+    let tokenizationResult;
+
+    // If already registered on blockchain with an ID, just approve & tokenize
+    if (asset?.blockchainAssetId) {
+      const chainId = asset.blockchainAssetId;
+      console.log(`[Blockchain] Asset already registered with chain ID ${chainId}. Approving and tokenizing...`);
+      await blockchainService.approveAsset(chainId);
+      tokenizationResult = await blockchainService.tokenizeAsset(chainId, recipient);
+      tokenizationResult.assetId = chainId;
+    } else {
+      console.log(`[Blockchain] Running full tokenization flow for: ${assetData.name}`);
+      tokenizationResult = await blockchainService.fullTokenizationFlow(assetData, recipient);
+    }
+
+    if (!tokenizationResult.success) {
+      console.error("[Blockchain] Tokenization failed:", tokenizationResult.error);
+      return res.status(500).json({
+        success: false,
+        message: `Tokenization failed on-chain: ${tokenizationResult.error}`
+      });
+    }
+
+    const onChainAssetId = Number(tokenizationResult.assetId);
+
+    // Save updates if asset exists in DB
+    if (asset) {
+      asset.blockchainAssetId = onChainAssetId;
+      asset.status = "Tokenized";
+      asset.verificationStatus = "approved";
+      asset.txHash = tokenizationResult.tokenizeTxHash || tokenizationResult.txHash;
+      asset.tokenizedAt = new Date();
+      asset.issuerWallet = recipient;
+      await asset.save();
+    }
+
+    console.log(`[Blockchain] Asset tokenized successfully. On-chain ID: ${onChainAssetId}, Recipient: ${recipient}`);
+
+    return res.json({
+      success: true,
+      message: "Asset successfully tokenized on blockchain! Fractional ERC-1155 tokens minted to owner.",
+      data: {
+        assetId: asset?._id || assetId,
+        blockchainAssetId: onChainAssetId,
+        recipient,
+        totalShares: assetData.totalShares,
+        registerTxHash: tokenizationResult.registerTxHash,
+        approveTxHash: tokenizationResult.approveTxHash,
+        tokenizeTxHash: tokenizationResult.tokenizeTxHash || tokenizationResult.txHash,
+        status: "Tokenized"
+      }
+    });
+  } catch (error) {
+    console.error("[Tokenize] Internal error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to tokenize asset on blockchain"
+    });
+  }
+}
+
+// ==========================================
 // 8. BLOCKCHAIN: GET ASSETS
 // ==========================================
 export async function getAssets(req, res) {
@@ -596,8 +729,9 @@ export async function getAssets(req, res) {
       filter.status = req.query.status;
     }
 
-    if (req.query.issuer) {
-      filter.issuerWallet = req.query.issuer;
+    const issuerParam = req.query.issuer || req.query.owner || req.query.ownerWallet;
+    if (issuerParam) {
+      filter.issuerWallet = { $regex: new RegExp(`^${issuerParam}$`, "i") };
     }
 
     const assets = await Asset.find(filter);
