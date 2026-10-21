@@ -10,9 +10,28 @@ import User from "../models/User.js";
 import DocumentHash from "../models/DocumentHash.js";
 import aiService from "../services/aiService.js";
 import blockchainService from "../services/blockchainService.js";
+import notificationService from "../services/notificationService.js";
+import spvService from "../services/spvService.js";
+import ownershipTransferService from "../services/ownershipTransferService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Helper function to convert local file path to HTTP URL
+const convertToHttpUrl = (filePath) => {
+  if (!filePath) return null;
+  
+  // If it's already an HTTP URL, return as-is
+  if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
+    return filePath;
+  }
+  
+  // Extract filename from local path
+  const filename = path.basename(filePath);
+  
+  // Return HTTP URL
+  return `http://localhost:5001/uploads/${filename}`;
+};
 
 // The merged Asset model registers this Mongoose model.
 // Use it for verification operations requiring populate(),
@@ -57,7 +76,7 @@ export async function uploadAsset(req, res) {
 
       if (file) {
         documents[field] = {
-          url: file.path,
+          url: convertToHttpUrl(file.path),
           publicId: file.filename,
         };
       }
@@ -69,7 +88,7 @@ export async function uploadAsset(req, res) {
 
     if (legacyFile && !documents.deed) {
       documents.deed = {
-        url: legacyFile.path,
+        url: convertToHttpUrl(legacyFile.path),
         publicId: legacyFile.filename,
       };
     }
@@ -212,6 +231,18 @@ export async function verifyAsset(req, res) {
       }
       // Use the local file directly
       documentPath = documentUrl;
+    } else if (documentUrl.startsWith('http://localhost') || documentUrl.startsWith('http://127.0.0.1')) {
+      // Convert HTTP URL to local file path
+      const filename = path.basename(documentUrl);
+      const localPath = path.join(__dirname, '../../uploads', filename);
+      
+      if (!fs.existsSync(localPath)) {
+        return res.status(400).json({
+          success: false,
+          message: "Local document file not found",
+        });
+      }
+      documentPath = localPath;
     } else {
       // Download from HTTPS URL
       if (!documentUrl.startsWith("https://")) {
@@ -339,15 +370,29 @@ export async function getUserAssets(req, res) {
     return res.json({
       success: true,
       data: {
-        assets: assets.map((asset) => ({
-          assetId: asset._id,
-          assetName: asset.assetName,
-          assetType: asset.assetType,
-          valuation: asset.valuation,
-          currency: asset.currency,
-          verificationStatus: asset.verificationStatus,
-          createdAt: asset.createdAt,
-        })),
+        assets: assets.map((asset) => {
+          const assetObj = asset.toObject();
+          
+          // Convert document URLs to HTTP URLs
+          if (assetObj.documents) {
+            for (const key in assetObj.documents) {
+              if (assetObj.documents[key]?.url) {
+                assetObj.documents[key].url = convertToHttpUrl(assetObj.documents[key].url);
+              }
+            }
+          }
+          
+          return {
+            assetId: asset._id,
+            assetName: asset.assetName,
+            assetType: asset.assetType,
+            valuation: asset.valuation,
+            currency: asset.currency,
+            verificationStatus: asset.verificationStatus,
+            documents: assetObj.documents,
+            createdAt: asset.createdAt,
+          };
+        }),
         count: assets.length,
       },
     });
@@ -373,29 +418,42 @@ export async function getAllAssets(req, res) {
     return res.json({
       success: true,
       data: {
-        assets: assets.map((asset) => ({
-          assetId: asset._id,
-          assetName: asset.assetName,
-          assetType: asset.assetType,
-          valuation: asset.valuation,
-          currency: asset.currency,
-          verificationStatus: asset.verificationStatus,
-          documents: asset.documents,
-          documentAuthentic: asset.documentAuthentic,
-          ownershipVerified: asset.ownershipVerified,
-          ocrData: asset.ocrData,
-          rejectionReason: asset.rejectionReason,
-          createdAt: asset.createdAt,
-          verifiedAt: asset.verifiedAt,
-          owner: asset.ownerId
-            ? {
-                id: asset.ownerId._id,
-                name: asset.ownerId.name,
-                email: asset.ownerId.email,
-                role: asset.ownerId.role,
+        assets: assets.map((asset) => {
+          const assetObj = asset.toObject();
+          
+          // Convert document URLs to HTTP URLs
+          if (assetObj.documents) {
+            for (const key in assetObj.documents) {
+              if (assetObj.documents[key]?.url) {
+                assetObj.documents[key].url = convertToHttpUrl(assetObj.documents[key].url);
               }
-            : null,
-        })),
+            }
+          }
+          
+          return {
+            assetId: asset._id,
+            assetName: asset.assetName,
+            assetType: asset.assetType,
+            valuation: asset.valuation,
+            currency: asset.currency,
+            verificationStatus: asset.verificationStatus,
+            documents: assetObj.documents,
+            documentAuthentic: asset.documentAuthentic,
+            ownershipVerified: asset.ownershipVerified,
+            ocrData: asset.ocrData,
+            rejectionReason: asset.rejectionReason,
+            createdAt: asset.createdAt,
+            verifiedAt: asset.verifiedAt,
+            owner: asset.ownerId
+              ? {
+                  id: asset.ownerId._id,
+                  name: asset.ownerId.name,
+                  email: asset.ownerId.email,
+                  role: asset.ownerId.role,
+                }
+              : null,
+          };
+        }),
         count: assets.length,
       },
     });
@@ -433,10 +491,23 @@ export async function getAssetDetails(req, res) {
       });
     }
 
+    // Convert document URLs to HTTP URLs for frontend access
+    const assetWithHttpUrls = asset.toObject();
+    if (assetWithHttpUrls.documents) {
+      for (const key in assetWithHttpUrls.documents) {
+        if (assetWithHttpUrls.documents[key]?.url) {
+          assetWithHttpUrls.documents[key].url = convertToHttpUrl(assetWithHttpUrls.documents[key].url);
+        }
+      }
+    }
+    if (assetWithHttpUrls.document) {
+      assetWithHttpUrls.document = convertToHttpUrl(assetWithHttpUrls.document);
+    }
+
     return res.json({
       success: true,
       data: {
-        asset,
+        asset: assetWithHttpUrls,
         owner: asset.ownerId
           ? {
               id: asset.ownerId._id,
@@ -518,50 +589,38 @@ export async function updateVerificationStatus(req, res) {
 
     await asset.save();
 
-    // If approved, trigger blockchain tokenization
+    // If approved, notify asset owner and set status to awaiting consent
     if (verificationStatus === "approved") {
       try {
-        console.log(`[Blockchain] Initiating tokenization for asset ${assetId}`);
+        console.log(`[Asset Controller] Asset ${assetId} approved by compliance officer`);
 
-        // Prepare asset data for blockchain
-        const assetData = {
-          name: asset.assetName || asset.name,
-          symbol: asset.symbol,
-          metadataURI: asset.metadataURI,
-          documentHash: asset.documentHash,
-          valuationLKR: asset.valuationLKR || asset.valuation,
-          totalShares: asset.totalShares
-        };
+        // Update asset status to await owner consent
+        asset.status = "awaiting_consent";
+        await asset.save();
 
-        // Get issuer wallet address
-        const issuerAddress = asset.issuerWallet || "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // Default to first Hardhat account
-
-        // Trigger full tokenization flow
-        const tokenizationResult = await blockchainService.fullTokenizationFlow(
-          assetData,
-          issuerAddress
+        // Send notification to asset owner
+        await notificationService.sendApprovalNotification(
+          asset.ownerId,
+          asset._id,
+          asset.assetName || asset.name
         );
 
-        if (tokenizationResult.success) {
-          console.log(`[Blockchain] Asset ${assetId} tokenized successfully`);
-          console.log(`[Blockchain] Asset ID on chain: ${tokenizationResult.assetId}`);
-          console.log(`[Blockchain] Register TX: ${tokenizationResult.registerTxHash}`);
-          console.log(`[Blockchain] Approve TX: ${tokenizationResult.approveTxHash}`);
-          console.log(`[Blockchain] Tokenize TX: ${tokenizationResult.tokenizeTxHash}`);
-
-          // Update asset with blockchain data
-          asset.blockchainAssetId = tokenizationResult.assetId;
-          asset.status = "Tokenized";
-          asset.txHash = tokenizationResult.tokenizeTxHash;
-          asset.tokenizedAt = new Date();
-          await asset.save();
-        } else {
-          console.error(`[Blockchain] Tokenization failed for asset ${assetId}:`, tokenizationResult.error);
-          // Note: We don't fail the approval if blockchain fails, but log the error
-        }
-      } catch (blockchainError) {
-        console.error(`[Blockchain] Error during tokenization for asset ${assetId}:`, blockchainError);
-        // Note: We don't fail the approval if blockchain fails, but log the error
+        console.log(`[Asset Controller] Asset owner notified, awaiting consent`);
+      } catch (notificationError) {
+        console.error(`[Asset Controller] Error sending notification:`, notificationError);
+        // Don't fail the approval if notification fails
+      }
+    } else if (verificationStatus === "rejected") {
+      // Send rejection notification
+      try {
+        await notificationService.sendRejectionNotification(
+          asset.ownerId,
+          asset._id,
+          asset.assetName || asset.name,
+          rejectionReason
+        );
+      } catch (notificationError) {
+        console.error(`[Asset Controller] Error sending rejection notification:`, notificationError);
       }
     }
 
@@ -586,7 +645,408 @@ export async function updateVerificationStatus(req, res) {
 }
 
 // ==========================================
-// 8. BLOCKCHAIN: GET ASSETS
+// 8. ASSET OWNER: CONFIRM TOKENIZATION CONSENT
+// ==========================================
+export async function confirmTokenizationConsent(req, res) {
+  try {
+    const { assetId } = req.params;
+    const userId = req.user.userId;
+
+    if (!mongoose.isValidObjectId(assetId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid asset ID",
+      });
+    }
+
+    const asset = await AssetModel.findOne({
+      _id: assetId,
+      ownerId: userId,
+    });
+
+    if (!asset) {
+      return res.status(404).json({
+        success: false,
+        message: "Asset not found",
+      });
+    }
+
+    if (asset.verificationStatus !== "approved" && asset.status !== "awaiting_consent") {
+      return res.status(400).json({
+        success: false,
+        message: "Asset must be approved before providing consent",
+      });
+    }
+
+    if (asset.tokenizationConsent) {
+      // Return current status instead of error
+      const responseMessage = asset.status === 'ready_for_tokenization'
+        ? "Consent already provided. Asset is ready for blockchain tokenization (pending blockchain node)."
+        : asset.status === 'Tokenized'
+        ? "Consent already provided. Asset has been fully tokenized."
+        : "Consent already provided. Tokenization is in progress.";
+
+      return res.json({
+        success: true,
+        message: responseMessage,
+        data: {
+          assetId: asset._id,
+          tokenizationConsent: asset.tokenizationConsent,
+          tokenizationConsentAt: asset.tokenizationConsentAt,
+          spvDetails: asset.spvDetails,
+          status: asset.status,
+          alreadyProvided: true,
+        },
+      });
+    }
+
+    // Update asset with consent
+    asset.tokenizationConsent = true;
+    asset.tokenizationConsentAt = new Date();
+    asset.status = "spv_creation";
+    await asset.save();
+
+    console.log(`[Asset Controller] Consent provided for asset ${assetId} by user ${userId}`);
+
+    // Trigger SPV creation
+    const spvResult = await createSPVForAsset(asset, userId);
+
+    if (!spvResult.success) {
+      // Revert consent if SPV creation fails
+      asset.tokenizationConsent = false;
+      asset.tokenizationConsentAt = undefined;
+      asset.status = "awaiting_consent";
+      await asset.save();
+
+      return res.status(500).json({
+        success: false,
+        message: "Consent recorded but SPV creation failed",
+        error: spvResult.error,
+      });
+    }
+
+    // Refresh asset data to get updated status
+    const updatedAsset = await AssetModel.findById(asset._id);
+
+    const responseMessage = spvResult.blockchainSkipped
+      ? "Consent recorded, SPV created, ownership transferred. Blockchain tokenization pending (node not running)."
+      : "Consent recorded and full tokenization workflow completed";
+
+    return res.json({
+      success: true,
+      message: responseMessage,
+      data: {
+        assetId: updatedAsset._id,
+        tokenizationConsent: updatedAsset.tokenizationConsent,
+        tokenizationConsentAt: updatedAsset.tokenizationConsentAt,
+        spvDetails: updatedAsset.spvDetails,
+        status: updatedAsset.status,
+        blockchainSkipped: spvResult.blockchainSkipped || false,
+      },
+    });
+  } catch (error) {
+    console.error("Confirm tokenization consent error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Error confirming tokenization consent",
+      error: error.message,
+    });
+  }
+}
+
+// ==========================================
+// 9. GET TOKENIZATION STATUS
+// ==========================================
+export async function getTokenizationStatus(req, res) {
+  try {
+    const { assetId } = req.params;
+
+    if (!mongoose.isValidObjectId(assetId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid asset ID",
+      });
+    }
+
+    const asset = await AssetModel.findOne({
+      _id: assetId,
+      ownerId: req.user.userId,
+    });
+
+    if (!asset) {
+      return res.status(404).json({
+        success: false,
+        message: "Asset not found",
+      });
+    }
+
+    // Determine current step
+    const steps = {
+      documentApproved: asset.verificationStatus === "approved",
+      ownerConsent: asset.tokenizationConsent,
+      spvCreated: asset.spvCreated,
+      ownershipTransferred: asset.ownershipTransferred,
+      tokenized: asset.status === "Tokenized",
+    };
+
+    const currentStep = !steps.documentApproved ? "document_approval" :
+                        !steps.ownerConsent ? "owner_consent" :
+                        !steps.spvCreated ? "spv_creation" :
+                        !steps.ownershipTransferred ? "ownership_transfer" :
+                        !steps.tokenized ? "blockchain_tokenization" : "complete";
+
+    return res.json({
+      success: true,
+      data: {
+        assetId: asset._id,
+        assetName: asset.assetName,
+        currentStep,
+        steps,
+        status: asset.status,
+        spvDetails: asset.spvDetails,
+        tokenizedAt: asset.tokenizedAt,
+      },
+    });
+  } catch (error) {
+    console.error("Get tokenization status error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Error fetching tokenization status",
+    });
+  }
+}
+
+// ==========================================
+// 10. PRIVATE: CREATE SPV FOR ASSET
+// ==========================================
+async function createSPVForAsset(asset, userId) {
+  try {
+    console.log(`[Asset Controller] Creating SPV for asset ${asset._id}`);
+
+    // Create SPV
+    const spvResult = await spvService.createSPV(asset._id, userId);
+
+    if (!spvResult.success) {
+      return spvResult;
+    }
+
+    // Update asset with SPV details
+    const updateResult = await spvService.updateAssetWithSPVDetails(
+      asset._id,
+      spvResult.spvDetails
+    );
+
+    if (!updateResult.success) {
+      return updateResult;
+    }
+
+    // Send notification
+    await notificationService.sendSPVCreationNotification(
+      asset.ownerId,
+      asset._id,
+      spvResult.spvDetails
+    );
+
+    // Trigger ownership transfer
+    const transferResult = await transferAssetOwnership(asset, spvResult.spvDetails);
+
+    if (!transferResult.success) {
+      return transferResult;
+    }
+
+    return {
+      success: true,
+      spvDetails: spvResult.spvDetails,
+      blockchainSkipped: transferResult.blockchainSkipped || false,
+    };
+  } catch (error) {
+    console.error("[Asset Controller] Error creating SPV for asset:", error);
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+}
+
+// ==========================================
+// 11. PRIVATE: TRANSFER ASSET OWNERSHIP
+// ==========================================
+async function transferAssetOwnership(asset, spvDetails) {
+  try {
+    console.log(`[Asset Controller] Transferring ownership for asset ${asset._id}`);
+
+    // Get company owner ID (placeholder - in production, from config)
+    const companyOwnerId = ownershipTransferService.getCompanyOwnerId();
+
+    if (!companyOwnerId) {
+      // For now, keep ownership with the asset owner
+      // In production, this should transfer to the company
+      console.warn("[Asset Controller] Company owner ID not configured, skipping ownership transfer");
+    } else {
+      // Transfer ownership
+      const transferResult = await ownershipTransferService.transferOwnership(
+        asset._id,
+        companyOwnerId,
+        spvDetails
+      );
+
+      if (!transferResult.success) {
+        return transferResult;
+      }
+
+      // Send notification
+      await notificationService.sendOwnershipTransferNotification(
+        asset.ownerId,
+        asset._id,
+        asset.assetName || asset.name
+      );
+    }
+
+    // Mark ownership as transferred even if company owner ID is not configured
+    // This allows the workflow to proceed
+    if (!companyOwnerId) {
+      const mongoose = (await import("mongoose")).default;
+      const MongoAsset = mongoose.models.Asset;
+      const updatedAsset = await MongoAsset.findById(asset._id);
+      if (updatedAsset) {
+        updatedAsset.ownershipTransferred = true;
+        updatedAsset.ownershipTransferredAt = new Date();
+        await updatedAsset.save();
+        console.log(`[Asset Controller] Ownership transfer marked as complete (no actual transfer)`);
+      }
+    }
+
+    // Trigger blockchain tokenization
+    const tokenizationResult = await triggerBlockchainTokenization(asset);
+
+    if (!tokenizationResult.success) {
+      return tokenizationResult;
+    }
+
+    return {
+      success: true,
+      blockchainSkipped: tokenizationResult.blockchainSkipped || false,
+    };
+  } catch (error) {
+    console.error("[Asset Controller] Error transferring ownership:", error);
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+}
+
+// ==========================================
+// 12. PRIVATE: TRIGGER BLOCKCHAIN TOKENIZATION
+// ==========================================
+async function triggerBlockchainTokenization(asset) {
+  try {
+    console.log(`[Asset Controller] Initiating blockchain tokenization for asset ${asset._id}`);
+
+    // Check if blockchain is connected
+    const isConnected = await blockchainService.isConnected();
+    if (!isConnected) {
+      console.warn(`[Asset Controller] Blockchain node not running. Skipping blockchain tokenization.`);
+      console.warn(`[Asset Controller] Asset workflow completed up to ownership transfer. Tokenization pending blockchain node.`);
+
+      // Update asset status to indicate ready for tokenization
+      asset.status = "ready_for_tokenization";
+      await asset.save();
+
+      // Send notification indicating readiness
+      console.log(`\n=== NOTIFICATION: READY FOR TOKENIZATION ===`);
+      console.log(`Recipient: Asset Owner ID ${asset.ownerId}`);
+      console.log(`Asset ID: ${asset._id}`);
+      console.log(`Asset Name: ${asset.assetName || asset.name}`);
+      console.log(`Message: Your asset is ready for blockchain tokenization.`);
+      console.log(`Message: Please start the blockchain node to complete tokenization.`);
+      console.log(`=============================================\n`);
+
+      return {
+        success: true,
+        blockchainSkipped: true,
+        message: "Blockchain node not running. Asset ready for tokenization when node is available.",
+      };
+    }
+
+    // Prepare asset data for blockchain
+    const assetData = {
+      name: asset.assetName || asset.name,
+      symbol: asset.symbol,
+      metadataURI: asset.metadataURI,
+      documentHash: asset.documentHash,
+      valuationLKR: asset.valuationLKR || asset.valuation,
+      totalShares: asset.totalShares
+    };
+
+    // Get issuer wallet address
+    const issuerAddress = asset.issuerWallet || "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+
+    // Trigger full tokenization flow
+    const tokenizationResult = await blockchainService.fullTokenizationFlow(
+      assetData,
+      issuerAddress
+    );
+
+    if (tokenizationResult.success) {
+      console.log(`[Asset Controller] Asset ${asset._id} tokenized successfully`);
+      console.log(`[Asset Controller] Asset ID on chain: ${tokenizationResult.assetId}`);
+      console.log(`[Asset Controller] Register TX: ${tokenizationResult.registerTxHash}`);
+      console.log(`[Asset Controller] Approve TX: ${tokenizationResult.approveTxHash}`);
+      console.log(`[Asset Controller] Tokenize TX: ${tokenizationResult.tokenizeTxHash}`);
+
+      // Update asset with blockchain data
+      asset.blockchainAssetId = tokenizationResult.assetId;
+      asset.status = "Tokenized";
+      asset.txHash = tokenizationResult.tokenizeTxHash;
+      asset.tokenizedAt = new Date();
+      await asset.save();
+
+      // Send completion notification
+      await notificationService.sendTokenizationCompleteNotification(
+        asset.ownerId,
+        asset._id,
+        asset.assetName || asset.name
+      );
+
+      return {
+        success: true,
+        tokenizationResult,
+      };
+    } else {
+      console.error(`[Asset Controller] Tokenization failed for asset ${asset._id}:`, tokenizationResult.error);
+      return {
+        success: false,
+        error: tokenizationResult.error,
+      };
+    }
+  } catch (error) {
+    console.error("[Asset Controller] Error during blockchain tokenization:", error);
+
+    // Handle blockchain connection errors gracefully
+    if (error.message.includes("ECONNREFUSED") || error.message.includes("network")) {
+      console.warn(`[Asset Controller] Blockchain connection failed. Asset marked as ready for tokenization.`);
+      asset.status = "ready_for_tokenization";
+      await asset.save();
+
+      return {
+        success: true,
+        blockchainSkipped: true,
+        message: "Blockchain connection failed. Asset ready for tokenization when blockchain is available.",
+      };
+    }
+
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+}
+
+// ==========================================
+// 14. BLOCKCHAIN: GET ASSETS
 // ==========================================
 export async function getAssets(req, res) {
   try {
@@ -824,7 +1284,7 @@ export async function updateBlockchainStatus(req, res) {
 }
 
 // ==========================================
-// 12. PLATFORM STATISTICS
+// 15. PLATFORM STATISTICS
 // ==========================================
 export async function getPlatformStats(req, res) {
   try {
@@ -877,7 +1337,7 @@ export async function getPlatformStats(req, res) {
 }
 
 // ==========================================
-// 13. PRIVATE: DOCUMENT HASH DUPLICATE CHECK
+// 16. PRIVATE: DOCUMENT HASH DUPLICATE CHECK
 // ==========================================
 async function checkDocumentHashDuplicate(hash, assetId) {
   const existing = await DocumentHash.findOne({ hash });
@@ -896,7 +1356,7 @@ async function checkDocumentHashDuplicate(hash, assetId) {
 }
 
 // ==========================================
-// 14. PRIVATE: APPLY AI PIPELINE RESULTS
+// 17. PRIVATE: APPLY AI PIPELINE RESULTS
 // ==========================================
 async function applyAssetPipelineResults(
   asset,
@@ -1021,7 +1481,7 @@ async function applyAssetPipelineResults(
 }
 
 // ==========================================
-// 15. PRIVATE: ETHEREUM ADDRESS VALIDATION
+// 18. PRIVATE: ETHEREUM ADDRESS VALIDATION
 // ==========================================
 function ethersAddressIsValid(address) {
   return /^0x[a-fA-F0-9]{40}$/.test(address);

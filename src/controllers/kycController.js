@@ -10,6 +10,22 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Helper function to convert local file path to HTTP URL
+const convertToHttpUrl = (filePath) => {
+  if (!filePath) return null;
+  
+  // If it's already an HTTP URL, return as-is
+  if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
+    return filePath;
+  }
+  
+  // Extract filename from local path
+  const filename = path.basename(filePath);
+  
+  // Return HTTP URL
+  return `http://localhost:5001/uploads/${filename}`;
+};
+
 // Cloudinary integration stub - can be implemented later
 const deleteFromCloudinary = async (publicId) => {
   // Placeholder for Cloudinary deletion
@@ -72,6 +88,16 @@ export const uploadDocument = async (req, res) => {
             throw new Error(`Local file not found: ${imageUrl}`);
           }
           return imageUrl;
+        }
+        if (imageUrl.startsWith('http://localhost') || imageUrl.startsWith('http://127.0.0.1')) {
+          // Convert HTTP URL to local file path
+          const filename = path.basename(imageUrl);
+          const localPath = path.join(__dirname, '../../uploads', filename);
+          
+          if (!fs.existsSync(localPath)) {
+            throw new Error(`Local file not found: ${localPath}`);
+          }
+          return localPath;
         }
         const downloadPath = path.join(tempDir, fileName);
         const response = await axios({ method: "get", url: imageUrl, responseType: "stream" });
@@ -149,7 +175,7 @@ export const uploadDocument = async (req, res) => {
         userId,
         idType,
         idNumber: normalizedEnteredId,
-        documentImage: req.file.path,
+        documentImage: convertToHttpUrl(req.file.path),
         documentImagePublicId: req.file.filename,
         verificationStatus: "pending",
       });
@@ -207,8 +233,8 @@ export const uploadSelfie = async (req, res) => {
       });
     }
 
-    // Update selfie with local file path
-    kyc.selfie = req.file.path;
+    // Update selfie with HTTP URL
+    kyc.selfie = convertToHttpUrl(req.file.path);
     kyc.selfiePublicId = req.file.filename;
     kyc.verificationStatus = "under_review";
     await kyc.save();
@@ -269,6 +295,16 @@ export const verifyKYC = async (req, res) => {
           throw new Error(`Local file not found: ${imageUrl}`);
         }
         return imageUrl;
+      }
+      if (imageUrl.startsWith('http://localhost') || imageUrl.startsWith('http://127.0.0.1')) {
+        // Convert HTTP URL to local file path
+        const filename = path.basename(imageUrl);
+        const localPath = path.join(__dirname, '../../uploads', filename);
+        
+        if (!fs.existsSync(localPath)) {
+          throw new Error(`Local file not found: ${localPath}`);
+        }
+        return localPath;
       }
       const downloadPath = path.join(tempDir, fileName);
       const response = await axios({ method: "get", url: imageUrl, responseType: "stream" });
@@ -358,8 +394,8 @@ export const getKYCStatus = async (req, res) => {
         rejectionReason: kyc.rejectionReason,
         createdAt: kyc.createdAt,
         verifiedAt: kyc.verifiedAt,
-        documentImage: kyc.documentImage,
-        selfie: kyc.selfie,
+        documentImage: convertToHttpUrl(kyc.documentImage),
+        selfie: convertToHttpUrl(kyc.selfie),
       },
     });
   } catch (error) {
@@ -419,8 +455,8 @@ export const getKYCDetailsByUserId = async (req, res) => {
           ocrData: kyc.ocrData,
           pipelineResults: kyc.pipelineResults,
           rejectionReason: kyc.rejectionReason,
-          documentImage: kyc.documentImage,
-          selfie: kyc.selfie,
+          documentImage: convertToHttpUrl(kyc.documentImage),
+          selfie: convertToHttpUrl(kyc.selfie),
           createdAt: kyc.createdAt,
           verifiedAt: kyc.verifiedAt,
         },
@@ -563,6 +599,17 @@ export const adminVerifyKYC = async (req, res) => {
         }
         console.log(`Using local file: ${imageUrl}`);
         return imageUrl;
+      }
+      if (imageUrl.startsWith('http://localhost') || imageUrl.startsWith('http://127.0.0.1')) {
+        // Convert HTTP URL to local file path
+        const filename = path.basename(imageUrl);
+        const localPath = path.join(__dirname, '../../uploads', filename);
+        
+        if (!fs.existsSync(localPath)) {
+          throw new Error(`Local file not found: ${localPath}`);
+        }
+        console.log(`Using local file from HTTP URL: ${localPath}`);
+        return localPath;
       }
       console.log(`Downloading from URL: ${imageUrl}`);
       const downloadPath = path.join(tempDir, fileName);

@@ -13,6 +13,8 @@ import {
   getAllAssets,
   getAssetDetails,
   updateVerificationStatus,
+  confirmTokenizationConsent,
+  getTokenizationStatus,
 } from "../controllers/assetController.js";
 
 import {
@@ -172,6 +174,12 @@ router.get("/status/:assetId", protect, getAssetStatus);
 
 // Get assets belonging to the authenticated user
 router.get("/my-assets", protect, getUserAssets);
+
+// Asset owner consents to tokenization
+router.post("/:assetId/consent", protect, confirmTokenizationConsent);
+
+// Get tokenization workflow status
+router.get("/:assetId/tokenization-status", protect, getTokenizationStatus);
 
 // ==========================================
 // 2. COMPLIANCE OFFICER / ADMIN ROUTES
