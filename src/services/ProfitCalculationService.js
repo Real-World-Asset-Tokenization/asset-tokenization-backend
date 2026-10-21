@@ -32,7 +32,10 @@ class ProfitCalculationService {
       totalShares
     );
 
-    const totalEligibleTokenSeconds = BigInt(holdingData.totalEligibleTokenSeconds);
+    const totalEligibleTokenSeconds = BigInt(Math.floor(holdingData.totalEligibleTokenSeconds));
+    if (totalEligibleTokenSeconds === 0n) {
+      throw new Error("No tokens were held during this period, so there is nobody to pay.");
+    }
     const totalDistributableBaseUnits = ethers.parseUnits(distributableAmount.toString(), decimals);
 
     let sumAllocatedBaseUnits = 0n;

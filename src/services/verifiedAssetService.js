@@ -2,14 +2,47 @@ import { Asset } from "../models/Asset.js";
 import { TokenizationRecord } from "../models/TokenizationRecord.js";
 import { TokenPricingService } from "./tokenPricingService.js";
 import blockchainReconciler from "./blockchainReconciliationService.js";
+import { invalidateChainSync } from "./chainSyncService.js";
 
 export class VerifiedAssetService {
+  static async resolveRegisteredAsset(asset) {
+    const registry = blockchainReconciler.getAssetRegistryContract();
+    const owner = (asset.issuerWallet || asset.ownerAddress || "").toLowerCase();
+    // A database ID is not proof of a registry identity. Match immutable deed
+    // metadata and the issuer, including after a local-chain reset.
+    if (!owner || !asset.documentHash) return null;
+    const ids = await registry.getAssetsByIssuer(owner);
+    const matches = [];
+    for (const id of ids) {
+      const record = await registry.getAsset(id);
+      if (record.documentHash === asset.documentHash &&
+          record.issuer.toLowerCase() === owner &&
+          Number(record.totalShares) === Number(asset.totalShares)) {
+        matches.push(record);
+      }
+    }
+    if (matches.length > 1) {
+      throw new Error("Multiple registry assets match this deed. Reconcile the registration before tokenizing.");
+    }
+    if (!matches.length) return null;
+    const record = matches[0];
+    await Asset.findOneAndUpdate(
+      { assetId: Number(asset.assetId) },
+      { $set: { blockchainAssetId: Number(record.assetId) } }
+    );
+    return record;
+  }
   /**
    * Retrieves verified assets eligible for tokenization, optionally filtered by owner wallet.
    * Ensures frontend only displays verified, actionable assets to their rightful owners.
    */
-  static async getVerifiedAssets(ownerWallet = null) {
-    let assets = await Asset.find();
+  static async getVerifiedAssets(ownerWallet = null, ownerId = null) {
+    let assets = await Asset.find(ownerId ? { ownerId } : {});
+    if (ownerWallet) {
+      assets = assets.filter(asset =>
+        (asset.issuerWallet || asset.ownerAddress || "").toLowerCase() === ownerWallet.toLowerCase()
+      );
+    }
 
     // Map and enrich with tokenization records from Azure Cosmos DB / memory
     const enriched = await Promise.all(
@@ -19,7 +52,7 @@ export class VerifiedAssetService {
         // Also check authoritative on-chain status if possible
         let onChainTokenized = false;
         try {
-          const onChainStatus = await blockchainReconciler.getOnChainAssetStatus(asset.assetId);
+          const onChainStatus = await blockchainReconciler.getOnChainAssetStatus(asset.blockchainAssetId ?? tokenRecord?.tokenId ?? asset.assetId);
           onChainTokenized = onChainStatus.isTokenizedOnChain;
         } catch (e) {
           // If contract doesn't have asset yet, fallback to db status
@@ -47,7 +80,8 @@ export class VerifiedAssetService {
 
         return {
           assetId: asset.assetId,
-          blockchainAssetId: Number(asset.blockchainAssetId || asset.assetId),
+          ownerId: asset.ownerId || null,
+          blockchainAssetId: Number(asset.blockchainAssetId ?? tokenRecord?.tokenId ?? asset.assetId),
           name: asset.name || asset.assetName,
           symbol: asset.symbol,
           propertyType: asset.propertyType || "Residential Real Estate",
@@ -100,16 +134,15 @@ export class VerifiedAssetService {
       isAlreadyTokenized = true;
     }
 
-    const onChainAssetId = Number(asset.blockchainAssetId || asset.assetId);
-
-    try {
-      const onChain = await blockchainReconciler.getOnChainAssetStatus(onChainAssetId);
-      if (onChain.isTokenizedOnChain) {
-        isAlreadyTokenized = true;
-      }
-    } catch (e) {
-      // ignore
-    }
+    const registeredAsset = await this.resolveRegisteredAsset(asset);
+    const onChainAssetId = registeredAsset ? Number(registeredAsset.assetId) : null;
+    isAlreadyTokenized = registeredAsset ? Number(registeredAsset.status) === 2 : false;
+    const isApproved = registeredAsset && Number(registeredAsset.status) === 1;
+    const blockingReason = !registeredAsset
+      ? "This asset is not registered on the current blockchain. Register it again and obtain on-chain approval before tokenizing."
+      : isAlreadyTokenized ? "Asset already tokenized."
+      : !isApproved ? "This asset requires approval in the on-chain registry before tokenizing."
+      : null;
 
     const valuation = asset.valuationLKR || asset.valuation || 10000000;
     const totalShares = asset.totalShares || 1000;
@@ -128,8 +161,9 @@ export class VerifiedAssetService {
       approvedTokenSupply: pricing.totalShares,
       calculatedReferencePrice: pricing.referencePriceLKR,
       formulaExplanation: pricing.formulaExpression,
-      isEligible: !isAlreadyTokenized,
-      existingStatus: isAlreadyTokenized ? "TOKENIZED" : "VERIFIED_ELIGIBLE",
+      isEligible: Boolean(isApproved),
+      blockingReason,
+      existingStatus: isAlreadyTokenized ? "TOKENIZED" : isApproved ? "VERIFIED_ELIGIBLE" : "REGISTRATION_REQUIRED",
       documentHash: asset.documentHash,
       metadataURI: asset.metadataURI,
       estimatedGasUnits: 251218, // Measured from Hardhat benchmark test
@@ -181,7 +215,7 @@ export class VerifiedAssetService {
           tokenizationStatus: "TOKENIZED",
           chainId: 31337,
           contractAddress: verification.contractAddress,
-          tokenId: Number(assetId),
+          tokenId: onChainAssetId,
           mintingTxHash: txHash,
           confirmedBlockNumber: verification.blockNumber,
           approvedMetadataHash: asset.documentHash,
@@ -204,6 +238,7 @@ export class VerifiedAssetService {
       }
     );
 
+    invalidateChainSync();
     return {
       success: true,
       message: "Asset tokenization verified and recorded successfully in Azure Cosmos DB.",

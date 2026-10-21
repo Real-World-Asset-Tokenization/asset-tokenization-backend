@@ -100,7 +100,16 @@ class MerkleDistributionService {
   /**
    * Generates Merkle root and proofs from finalized allocations and records them in DB.
    */
-  async buildAndPersistDistribution({
+  async buildAndPersistDistribution(params) {
+    const built = this.buildDistribution(params);
+    return this.persistDistribution(built);
+  }
+
+  /**
+   * Builds the Merkle tree and proofs in memory only. Nothing is saved, so a
+   * failed on-chain publish leaves no orphaned round behind.
+   */
+  buildDistribution({
     roundId,
     assetId,
     chainId,
@@ -177,33 +186,33 @@ class MerkleDistributionService {
       });
     }
 
-    // Persist allocations to DB
-    await InvestorAllocation.insertMany(persistedAllocations);
-
-    // Persist or update DistributionRound
-    const roundRecord = await DistributionRound.create({
-      roundId: Number(roundId),
-      assetId: Number(assetId),
-      periodLabel,
-      merkleRoot,
-      totalPayout: Number(totalPayoutBaseUnits),
-      totalPayoutFormatted,
-      fundedAmount: 0,
-      claimedAmount: 0,
-      paymentTokenAddress,
-      reportHash,
-      status: "Approved",
-      eligibleHoldersCount: eligibleAllocations.length,
-      totalEligibleTokenSeconds
-    });
-
     return {
       roundId,
       merkleRoot,
       eligibleHoldersCount: eligibleAllocations.length,
-      roundRecord,
-      allocations: persistedAllocations
+      allocations: persistedAllocations,
+      roundData: {
+        roundId: Number(roundId),
+        assetId: Number(assetId),
+        periodLabel,
+        merkleRoot,
+        totalPayout: Number(totalPayoutBaseUnits),
+        totalPayoutFormatted,
+        fundedAmount: 0,
+        claimedAmount: 0,
+        paymentTokenAddress,
+        reportHash,
+        status: "Approved",
+        eligibleHoldersCount: eligibleAllocations.length,
+        totalEligibleTokenSeconds
+      }
     };
+  }
+
+  async persistDistribution(built, overrides = {}) {
+    await InvestorAllocation.insertMany(built.allocations);
+    const roundRecord = await DistributionRound.create({ ...built.roundData, ...overrides });
+    return { ...built, roundRecord };
   }
 
   /**
@@ -227,6 +236,8 @@ class MerkleDistributionService {
       walletAddress: allocation.walletAddress,
       payoutUnits: allocation.payoutUnits,
       payoutAmountFormatted: allocation.payoutAmountFormatted,
+      tokenSeconds: allocation.tokenSeconds,
+      weightFraction: allocation.weightFraction,
       merkleProof: allocation.merkleProof,
       leafHash: allocation.leafHash,
       isClaimed: allocation.isClaimed,

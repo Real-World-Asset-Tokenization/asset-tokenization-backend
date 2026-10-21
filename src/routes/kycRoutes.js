@@ -12,6 +12,7 @@ import {
 } from "../controllers/kycController.js";
 import { protect, authorize } from "../middleware/auth.js";
 import { upload, uploadToCloudinaryMiddleware } from "../middleware/upload.js";
+import KYC from "../models/KYC.js";
 
 const router = express.Router();
 
@@ -90,5 +91,27 @@ router.put(
   authorize("admin", "compliance_officer"),
   updateKYCStatus
 );
+
+/**
+ * GET /api/kyc/admin/summary
+ * KYC counts by status and the latest submissions, for the admin dashboard.
+ */
+router.get("/admin/summary", protect, authorize("admin", "compliance_officer"), async (req, res) => {
+  try {
+    const records = await KYC.find({}, "userId verificationStatus createdAt verifiedAt").populate("userId", "name email role").lean();
+    const counts = { pending: 0, under_review: 0, approved: 0, rejected: 0 };
+    for (const r of records) counts[r.verificationStatus] = (counts[r.verificationStatus] || 0) + 1;
+    const recent = records
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .slice(0, 6)
+      .map((r) => ({
+        userId: r.userId?._id, name: r.userId?.name, email: r.userId?.email, role: r.userId?.role,
+        status: r.verificationStatus, submittedAt: r.createdAt, verifiedAt: r.verifiedAt,
+      }));
+    res.json({ success: true, data: { total: records.length, counts, recent } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
 
 export default router;

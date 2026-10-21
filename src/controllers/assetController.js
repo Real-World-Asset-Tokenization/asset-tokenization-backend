@@ -1,3 +1,4 @@
+import { syncAllWithChain } from "../services/chainSyncService.js";
 import crypto from "crypto";
 import axios from "axios";
 import fs from "fs";
@@ -10,6 +11,8 @@ import User from "../models/User.js";
 import DocumentHash from "../models/DocumentHash.js";
 import aiService from "../services/aiService.js";
 import blockchainService from "../services/blockchainService.js";
+import { VerifiedAssetService } from "../services/verifiedAssetService.js";
+import blockchainReconciler from "../services/blockchainReconciliationService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -384,6 +387,7 @@ export async function getUserAssets(req, res) {
 // ==========================================
 export async function getAllAssets(req, res) {
   try {
+    await syncAllWithChain();
     const assets = await AssetModel.find({})
       .populate("ownerId", "name email role")
       .sort({ createdAt: -1 });
@@ -536,56 +540,37 @@ export async function updateVerificationStatus(req, res) {
 
     await asset.save();
 
-    // If approved, trigger blockchain tokenization
+    // Document approval and registry approval are separate. Never mint here:
+    // the owner confirms tokenization in their wallet.
+    let approvalMessage = "Document verification status updated";
     if (verificationStatus === "approved") {
       try {
-        console.log(`[Blockchain] Initiating tokenization for asset ${assetId}`);
-
-        // Prepare asset data for blockchain
-        const assetData = {
-          name: asset.assetName || asset.name,
-          symbol: asset.symbol,
-          metadataURI: asset.metadataURI,
-          documentHash: asset.documentHash,
-          valuationLKR: asset.valuationLKR || asset.valuation,
-          totalShares: asset.totalShares
-        };
-
-        // Get issuer wallet address
-        const issuerAddress = asset.issuerWallet || "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; // Default to first Hardhat account
-
-        // Trigger full tokenization flow
-        const tokenizationResult = await blockchainService.fullTokenizationFlow(
-          assetData,
-          issuerAddress
-        );
-
-        if (tokenizationResult.success) {
-          console.log(`[Blockchain] Asset ${assetId} tokenized successfully`);
-          console.log(`[Blockchain] Asset ID on chain: ${tokenizationResult.assetId}`);
-          console.log(`[Blockchain] Register TX: ${tokenizationResult.registerTxHash}`);
-          console.log(`[Blockchain] Approve TX: ${tokenizationResult.approveTxHash}`);
-          console.log(`[Blockchain] Tokenize TX: ${tokenizationResult.tokenizeTxHash}`);
-
-          // Update asset with blockchain data
-          asset.blockchainAssetId = tokenizationResult.assetId;
-          asset.status = "Tokenized";
-          asset.txHash = tokenizationResult.tokenizeTxHash;
-          asset.tokenizedAt = new Date();
-          await asset.save();
-        } else {
-          console.error(`[Blockchain] Tokenization failed for asset ${assetId}:`, tokenizationResult.error);
-          // Note: We don't fail the approval if blockchain fails, but log the error
+        const registered = await VerifiedAssetService.resolveRegisteredAsset(asset);
+        if (!registered) {
+          return res.status(409).json({ success: false, message: "Document review is approved, but the asset is not registered on this blockchain. Register it from the owner wallet, then retry approval." });
         }
-      } catch (blockchainError) {
-        console.error(`[Blockchain] Error during tokenization for asset ${assetId}:`, blockchainError);
-        // Note: We don't fail the approval if blockchain fails, but log the error
+        const chainId = Number(registered.assetId);
+        if (Number(registered.status) === 0) {
+          const registry = blockchainReconciler.getAssetRegistryContract().connect(blockchainService.signer);
+          const transaction = await registry.approveAsset(chainId);
+          await transaction.wait();
+        } else if (![1, 2].includes(Number(registered.status))) {
+          throw new Error("The registry asset is rejected and cannot be approved through this action.");
+        }
+        asset.blockchainAssetId = chainId;
+        asset.status = Number(registered.status) === 2 ? "Tokenized" : "Approved";
+        await asset.save();
+        approvalMessage = asset.status === "Tokenized"
+          ? "Document review approved. This asset is already tokenized."
+          : "Document review and blockchain approval complete. The owner can now tokenize.";
+      } catch (chainError) {
+        return res.status(502).json({ success: false, message: "Document review was saved, but blockchain approval failed. Retry approval after fixing the chain connection or verifier permissions.", error: chainError.shortMessage || chainError.message });
       }
     }
 
     return res.json({
       success: true,
-      message: "Verification status updated",
+      message: approvalMessage,
       data: {
         assetId: asset._id,
         verificationStatus: asset.verificationStatus,

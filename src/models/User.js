@@ -26,6 +26,13 @@ const userSchema = new mongoose.Schema({
     enum: ["investor", "asset_owner", "admin", "compliance_officer"],
     default: "investor",
   },
+  // Valuation powers are granted explicitly by an operator script, never chosen at
+  // sign-up, so a self-registered role cannot approve official property values.
+  permissions: {
+    type: [String],
+    enum: ["VALUATION_PROPOSE", "VALUATION_APPROVE"],
+    default: [],
+  },
   isVerified: {
     type: Boolean,
     default: false,

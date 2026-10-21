@@ -349,3 +349,20 @@ export const updateWallet = async (req, res) => {
   }
 };
 
+
+// Who a wallet belongs to, from the signed-in user's point of view: "yours", "other_user"
+// or "unlinked". It never reveals which other account owns the wallet.
+export const checkWallet = async (req, res) => {
+  try {
+    const wallet = String(req.params.address || "").toLowerCase().trim();
+    if (!/^0x[a-f0-9]{40}$/.test(wallet)) {
+      return res.status(400).json({ success: false, message: "Invalid Ethereum wallet address format" });
+    }
+    const owner = await User.findOne({ walletAddress: wallet }).select("_id").lean();
+    const status = !owner ? "unlinked" : String(owner._id) === String(req.user.userId) ? "yours" : "other_user";
+    res.status(200).json({ success: true, data: { walletAddress: wallet, status } });
+  } catch (error) {
+    console.error("Check wallet error:", error);
+    res.status(500).json({ success: false, message: "Error checking wallet", error: error.message });
+  }
+};

@@ -16,7 +16,6 @@ class OwnershipCalculator {
     }
 
     const periodDuration = periodEnd - periodStart;
-    const totalEligibleTokenSeconds = totalShares * periodDuration;
 
     // Retrieve all events for this asset up to periodEnd
     const allEvents = await OwnershipEvent.find({
@@ -109,18 +108,20 @@ class OwnershipCalculator {
         });
       }
 
-      const weightFraction = totalEligibleTokenSeconds > 0
-        ? tokenSeconds / totalEligibleTokenSeconds
-        : 0;
-
       results.push({
         walletAddress: wallet.toLowerCase(),
         openingBalance: initialBal,
         closingBalance: Math.max(0, currentBal),
         tokenSeconds,
-        weightFraction,
         timeline
       });
+    }
+
+    // Divide by the token-seconds actually held. Using totalShares * duration would
+    // count time before the asset was minted, leaving part of the pool unassigned.
+    const totalEligibleTokenSeconds = results.reduce((sum, r) => sum + r.tokenSeconds, 0);
+    for (const r of results) {
+      r.weightFraction = totalEligibleTokenSeconds > 0 ? r.tokenSeconds / totalEligibleTokenSeconds : 0;
     }
 
     return {

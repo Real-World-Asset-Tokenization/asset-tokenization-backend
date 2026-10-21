@@ -4,12 +4,52 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { ethers } from "ethers";
 import { Asset } from "../models/Asset.js";
+import { TokenizationRecord } from "../models/TokenizationRecord.js";
+import { syncAllWithChain } from "../services/chainSyncService.js";
+import { protect } from "../middleware/auth.js";
+import { requireDatabase } from "../middleware/requireDatabase.js";
 import gasAnalyticsService from "../services/GasAnalyticsService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const router = express.Router();
+router.use("/assets", (req, res, next) =>
+  req.query.mine === "true" ? requireDatabase(req, res, next) : next()
+);
+
+// Discovery does not depend on a seller creating an order or an available RPC.
+router.get("/assets", (req, res, next) => req.query.mine === "true" ? protect(req, res, next) : next(), async (req, res) => {
+  try {
+    await syncAllWithChain();
+    const [assets, records] = await Promise.all([
+      Asset.find(req.user ? { ownerId: req.user.userId } : {}),
+      TokenizationRecord.find({ tokenizationStatus: "TOKENIZED" }),
+    ]);
+    const confirmed = new Map(records.map(record => [Number(record.assetId), record]));
+    const data = assets.filter(asset => asset.status === "Tokenized" || confirmed.has(Number(asset.assetId)))
+      .map(asset => {
+        const record = confirmed.get(Number(asset.assetId));
+        return {
+          assetId: asset.assetId,
+          ownerId: asset.ownerId || null,
+          tokenId: asset.blockchainAssetId ?? record?.tokenId ?? asset.assetId,
+          name: asset.name || asset.assetName,
+          symbol: asset.symbol,
+          ownerWallet: asset.issuerWallet || asset.ownerAddress || record?.ownerWallet || "",
+          assetType: asset.assetType,
+          propertyType: asset.propertyType,
+          location: asset.location,
+          description: asset.description,
+          imageUrl: asset.imageUrl,
+          totalShares: record?.approvedTokenSupply ?? asset.totalShares,
+        };
+      });
+    res.json({ success: true, count: data.length, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Unable to load tokenized assets" });
+  }
+});
 
 function getMarketplaceContract() {
   try {
@@ -28,12 +68,20 @@ function getMarketplaceContract() {
  * Retrieves active or all listings from on-chain marketplace
  */
 router.get("/listings", async (req, res) => {
+  let contract;
   try {
-    const contract = getMarketplaceContract();
+    contract = getMarketplaceContract();
     if (!contract) {
       return res.status(503).json({ success: false, message: "Marketplace contract not configured" });
     }
 
+    if (await contract.runner.getCode(await contract.getAddress()) === "0x") {
+      return res.status(503).json({
+        success: false,
+        code: "MARKETPLACE_NOT_DEPLOYED",
+        message: "Marketplace contract is not deployed on the configured network. Deploy the contracts and update deployedContracts.json.",
+      });
+    }
     const total = await contract.totalListings();
     const count = Number(total);
     const listings = [];
@@ -54,6 +102,7 @@ router.get("/listings", async (req, res) => {
           assetSymbol: assetDoc?.symbol || `RWA-${assetIdNum}`,
           location: assetDoc?.location || "Sri Lanka",
           imageUrl: assetDoc?.imageUrl || "",
+          totalShares: assetDoc?.totalShares || null,
           amount: Number(item.amount),
           pricePerTokenBase: item.pricePerToken.toString(),
           pricePerTokenFormatted: Number(ethers.formatUnits(item.pricePerToken, 6)),
@@ -79,7 +128,13 @@ router.get("/listings", async (req, res) => {
 
     res.json({ success: true, count: filtered.length, data: filtered });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(503).json({
+      success: false,
+      code: "MARKETPLACE_UNAVAILABLE",
+      message: "Unable to read the marketplace. Check BLOCKCHAIN_RPC_URL and the deployed marketplace contract.",
+    });
+  } finally {
+    contract?.runner?.destroy();
   }
 });
 

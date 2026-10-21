@@ -14,7 +14,8 @@ const financialReportSchema = new mongoose.Schema(
     operatingExpenses: { type: Number, required: true, default: 0 },
     maintenanceReserve: { type: Number, required: true, default: 0 },
     netOperatingProfit: { type: Number, required: true, default: 0 },
-    carriedForwardLoss: { type: Number, required: true, default: 0 },
+    carriedForwardLoss: { type: Number, required: true, default: 0 }, // loss left to recover after this period
+    priorLossApplied: { type: Number, default: 0 }, // loss brought in from the previous period
     distributableAmount: { type: Number, required: true, default: 0 },
     currency: { type: String, default: "mUSD" },
     reportHash: { type: String, required: true },
@@ -26,6 +27,7 @@ const financialReportSchema = new mongoose.Schema(
     approvedBy: { type: String },
     approvedAt: { type: Date },
     rejectionReason: { type: String },
+    distributionRoundId: { type: Number }, // set once the report has been paid out
     notes: { type: String }
   },
   { timestamps: true }

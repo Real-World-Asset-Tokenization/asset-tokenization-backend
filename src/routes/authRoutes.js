@@ -7,6 +7,7 @@ import {
   verifyUser,
   getAllUsers,
   updateWallet,
+  checkWallet,
 } from "../controllers/authController.js";
 import { protect } from "../middleware/auth.js";
 
@@ -84,5 +85,6 @@ router.get("/me", protect, getMe);
 router.post("/verify/:userId", protect, verifyUser);
 router.get("/users", protect, getAllUsers);
 router.put("/wallet", protect, updateWalletValidation, validate, updateWallet);
+router.get("/wallet/check/:address", protect, checkWallet);
 
 export default router;

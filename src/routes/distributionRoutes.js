@@ -3,8 +3,13 @@ import DistributionRound from "../models/DistributionRound.js";
 import InvestorAllocation from "../models/InvestorAllocation.js";
 import merkleDistributionService from "../services/MerkleDistributionService.js";
 import distributionCoordinator from "../services/DistributionCoordinator.js";
+import { protect, authorize } from "../middleware/auth.js";
+import { requireDatabase } from "../middleware/requireDatabase.js";
+
+const adminOnly = [protect, authorize("admin", "compliance_officer")];
 
 const router = express.Router();
+router.use(requireDatabase);
 
 /**
  * GET /api/distribution/rounds
@@ -66,37 +71,29 @@ router.get("/claim-proof/:roundId/:wallet", async (req, res) => {
  * POST /api/distribution/execute
  * Automates the distribution round preparation and on-chain publication
  */
-router.post("/execute", async (req, res) => {
+router.post("/execute", adminOnly, async (req, res) => {
   try {
-    const {
-      assetId,
-      periodLabel,
-      periodStart,
-      periodEnd,
-      distributableAmount,
-      totalShares,
-      reportHash,
-      autoPublishOnChain = false
-    } = req.body;
+    const { reportId, assetId, periodLabel, periodStart, periodEnd, distributableAmount, reportHash, autoPublishOnChain = false } = req.body;
 
-    if (!assetId || !periodLabel || !periodStart || !periodEnd || !distributableAmount || !totalShares) {
-      return res.status(400).json({ success: false, message: "Missing required execution parameters" });
+    if (!reportId && (!assetId || !periodLabel || !periodStart || !periodEnd || !(Number(distributableAmount) > 0))) {
+      return res.status(400).json({ success: false, message: "Provide an approved reportId, or assetId, periodLabel, periodStart, periodEnd and distributableAmount" });
     }
 
+    // totalShares is read from the chain; a client-supplied value is ignored.
     const result = await distributionCoordinator.prepareAndPublishDistribution({
+      reportId,
       assetId: Number(assetId),
       periodLabel,
       periodStart: Number(periodStart),
       periodEnd: Number(periodEnd),
       distributableAmount: Number(distributableAmount),
-      totalShares: Number(totalShares),
       reportHash,
       autoPublishOnChain: Boolean(autoPublishOnChain)
     });
 
-    res.status(201).json({ success: true, data: result });
+    res.status(autoPublishOnChain ? 201 : 200).json({ success: true, data: result });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(400).json({ success: false, message: err.shortMessage || err.message });
   }
 });
 

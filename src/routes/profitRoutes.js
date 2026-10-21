@@ -3,6 +3,9 @@ import { ethers } from "ethers";
 import FinancialReport from "../models/FinancialReport.js";
 import profitCalculationService from "../services/ProfitCalculationService.js";
 import ownershipIndexer from "../services/OwnershipIndexer.js";
+import { protect, authorize } from "../middleware/auth.js";
+
+const adminOnly = [protect, authorize("admin", "compliance_officer")];
 
 const router = express.Router();
 
@@ -27,7 +30,7 @@ router.get("/reports", async (req, res) => {
  * POST /api/profit/reports
  * Submits a new financial period report
  */
-router.post("/reports", async (req, res) => {
+router.post("/reports", adminOnly, async (req, res) => {
   try {
     const {
       assetId,
@@ -37,7 +40,6 @@ router.post("/reports", async (req, res) => {
       grossRentalIncome,
       operatingExpenses,
       maintenanceReserve = 0,
-      carriedForwardLoss = 0,
       notes = ""
     } = req.body;
 
@@ -47,11 +49,22 @@ router.post("/reports", async (req, res) => {
 
     const startTs = Math.floor(new Date(startDate).getTime() / 1000);
     const endTs = Math.floor(new Date(endDate).getTime() / 1000);
+    if (!Number.isFinite(startTs) || !Number.isFinite(endTs) || endTs <= startTs) {
+      return res.status(400).json({ success: false, message: "End date must be after start date" });
+    }
 
     const gross = Number(grossRentalIncome) || 0;
     const exp = Number(operatingExpenses) || 0;
     const resv = Number(maintenanceReserve) || 0;
-    const priorLoss = Number(carriedForwardLoss) || 0;
+    if (gross < 0 || exp < 0 || resv < 0) {
+      return res.status(400).json({ success: false, message: "Income, expenses and reserve cannot be negative" });
+    }
+
+    // A loss from the asset's previous report must be recovered before new profit is paid out.
+    const previous = (await FinancialReport.find({ assetId: Number(assetId) }))
+      .filter((r) => r.status === "Approved" && r.endTimestamp <= startTs)
+      .sort((a, b) => b.endTimestamp - a.endTimestamp)[0];
+    const priorLoss = previous ? Number(previous.carriedForwardLoss) || 0 : 0;
 
     const netOperatingProfit = gross - exp - resv;
     let distributableAmount = 0;
@@ -93,6 +106,7 @@ router.post("/reports", async (req, res) => {
       distributableAmount,
       reportHash,
       status: "Draft",
+      priorLossApplied: priorLoss,
       notes
     });
 
@@ -106,7 +120,7 @@ router.post("/reports", async (req, res) => {
  * POST /api/profit/reports/:reportId/approve
  * Approves a financial report for dividend distribution
  */
-router.post("/reports/:reportId/approve", async (req, res) => {
+router.post("/reports/:reportId/approve", adminOnly, async (req, res) => {
   try {
     const { approverAddress } = req.body;
     const report = await FinancialReport.findOne({ reportId: req.params.reportId });
@@ -119,7 +133,7 @@ router.post("/reports/:reportId/approve", async (req, res) => {
       { reportId: req.params.reportId },
       {
         status: "Approved",
-        approvedBy: approverAddress || "Admin",
+        approvedBy: approverAddress || req.user.userId,
         approvedAt: new Date()
       }
     );
@@ -135,7 +149,7 @@ router.post("/reports/:reportId/approve", async (req, res) => {
  * POST /api/profit/calculate
  * Calculates time-weighted distribution against baseline snapshot
  */
-router.post("/calculate", async (req, res) => {
+router.post("/calculate", adminOnly, async (req, res) => {
   try {
     const { assetId, periodStart, periodEnd, distributableAmount, totalShares } = req.body;
 

@@ -14,9 +14,11 @@ import profitRoutes from "./routes/profitRoutes.js";
 import distributionRoutes from "./routes/distributionRoutes.js";
 import gasRoutes from "./routes/gasRoutes.js";
 import tokenizationRoutes from "./routes/tokenizationRoutes.js";
+import valuationRoutes from "./routes/valuationRoutes.js";
 
 import { pipelineVerify } from "./controllers/kycController.js";
 import { protect } from "./middleware/auth.js";
+import { requireDatabase } from "./middleware/requireDatabase.js";
 
 dotenv.config();
 
@@ -54,16 +56,16 @@ app.use(morgan("dev"));
 // ==================== API ROUTES ====================
 
 // Authentication and user management
-app.use("/api/auth", authRoutes);
+app.use("/api/auth", requireDatabase, authRoutes);
 
 // KYC verification
-app.use("/api/kyc", kycRoutes);
+app.use("/api/kyc", requireDatabase, kycRoutes);
 
 // Asset tokenization and asset document verification
 app.use("/api/assets", assetRoutes);
 
 // Compliance and administrative operations
-app.use("/api/compliance", complianceRoutes);
+app.use("/api/compliance", requireDatabase, complianceRoutes);
 
 // Token Marketplace & secondary peer-to-peer trading
 app.use("/api/marketplace", marketplaceRoutes);
@@ -80,8 +82,11 @@ app.use("/api/gas", gasRoutes);
 // Owner-initiated tokenization module (Dual-Price Model, preview, verification, Azure reconciliation)
 app.use("/api/tokenization", tokenizationRoutes);
 
+// Manual revaluation, approval and blockchain publication
+app.use("/api/valuations", valuationRoutes);
+
 // AI document verification pipeline
-app.post("/api/pipeline/verify", protect, pipelineVerify);
+app.post("/api/pipeline/verify", protect, requireDatabase, pipelineVerify);
 
 // ==================== HEALTH CHECK ====================
 
@@ -99,7 +104,7 @@ app.get("/api/health", (req, res) => {
     service: "Asset Tokenization Backend API",
     database: isDbConnected()
       ? "Azure Cosmos DB for MongoDB API (Connected)"
-      : "Azure Cosmos DB Disconnected (In-Memory Fallback Active)",
+      : "MongoDB disconnected (asset fallback only; authentication and KYC unavailable)",
     timestamp: new Date().toISOString(),
   });
 });

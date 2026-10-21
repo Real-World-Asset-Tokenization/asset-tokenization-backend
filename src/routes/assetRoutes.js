@@ -25,6 +25,7 @@ import {
 } from "../controllers/assetController.js";
 
 import { Asset } from "../models/Asset.js";
+import { syncAllWithChain, chainStatusFor } from "../services/chainSyncService.js";
 import { protect, authorize } from "../middleware/auth.js";
 import {
   upload,
@@ -217,6 +218,16 @@ router.put(
 // ==========================================
 
 // Get all tokenized/platform assets
+router.get("/owned", protect, async (req, res) => {
+  try {
+    const states = await syncAllWithChain();
+    const assets = await Asset.find({ ownerId: req.user.userId });
+    const data = assets.map((a) => ({ ...(a.toObject ? a.toObject() : a), chainStatus: chainStatusFor(states, a.assetId) }));
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Unable to load your assets" });
+  }
+});
 router.get("/", getAssets);
 
 // Platform statistics
@@ -480,13 +491,11 @@ router.post("/swap", protect, async (req, res) => {
       });
     }
 
-    const sourcePrice =
-      sourceAsset.sharePriceLKR ??
-      sourceAsset.valuationLKR / sourceAsset.totalShares;
-
-    const targetPrice =
-      targetAsset.sharePriceLKR ??
-      targetAsset.valuationLKR / targetAsset.totalShares;
+    // The exchange rate follows each asset's live valuation and issued token
+    // count. Do not use sharePriceLKR here: it is a denormalized display field
+    // and could be stale after a valuation or supply update.
+    const sourcePrice = Number(sourceAsset.valuationLKR) / Number(sourceAsset.totalShares);
+    const targetPrice = Number(targetAsset.valuationLKR) / Number(targetAsset.totalShares);
 
     if (
       !Number.isFinite(sourcePrice) ||
