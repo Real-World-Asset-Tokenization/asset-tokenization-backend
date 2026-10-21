@@ -9,6 +9,7 @@ import authRoutes from "./routes/authRoutes.js";
 import kycRoutes from "./routes/kycRoutes.js";
 import assetRoutes from "./routes/assetRoutes.js";
 import complianceRoutes from "./routes/complianceRoutes.js";
+import recommendationRoutes from "./routes/recommendationRoutes.js";
 
 import { pipelineVerify } from "./controllers/kycController.js";
 import { protect } from "./middleware/auth.js";
@@ -49,6 +50,9 @@ app.use("/api/assets", assetRoutes);
 
 // Compliance and administrative operations
 app.use("/api/compliance", complianceRoutes);
+
+// Land-match recommendations. Does not read KYC or asset records.
+app.use("/api/recommendations", recommendationRoutes);
 
 // AI document verification pipeline
 app.post("/api/pipeline/verify", protect, pipelineVerify);
@@ -116,6 +120,7 @@ async function startServer() {
       console.log(`KYC: http://localhost:${PORT}/api/kyc`);
       console.log(`Assets: http://localhost:${PORT}/api/assets`);
       console.log(`Compliance: http://localhost:${PORT}/api/compliance`);
+      console.log(`Recommendations: http://localhost:${PORT}/api/recommendations/match`);
       console.log(
         `AI Pipeline: http://localhost:${PORT}/api/pipeline/verify`
       );
