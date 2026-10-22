@@ -389,6 +389,15 @@ export async function getUserAssets(req, res) {
             valuation: asset.valuation,
             currency: asset.currency,
             verificationStatus: asset.verificationStatus,
+            status: asset.status,
+            documentAuthentic: asset.documentAuthentic,
+            ownershipVerified: asset.ownershipVerified,
+            tokenizationConsent: asset.tokenizationConsent,
+            spvCreated: asset.spvCreated,
+            ownershipTransferred: asset.ownershipTransferred,
+            spvDetails: asset.spvDetails,
+            riskScore: asset.riskScore,
+            rejectionReason: asset.rejectionReason,
             documents: assetObj.documents,
             createdAt: asset.createdAt,
           };
@@ -594,6 +603,11 @@ export async function updateVerificationStatus(req, res) {
       try {
         console.log(`[Asset Controller] Asset ${assetId} approved by compliance officer`);
 
+        // Set document and ownership verification flags to true upon approval
+        // This ensures the UI displays "Yes" for these fields after compliance approval
+        asset.documentAuthentic = true;
+        asset.ownershipVerified = true;
+
         // Update asset status to await owner consent
         asset.status = "awaiting_consent";
         await asset.save();
@@ -782,11 +796,14 @@ export async function getTokenizationStatus(req, res) {
     }
 
     // Determine current step
+    // If status is ready_for_tokenization or Tokenized, mark all steps as complete
+    const isReadyOrTokenized = asset.status === "ready_for_tokenization" || asset.status === "Tokenized";
+
     const steps = {
       documentApproved: asset.verificationStatus === "approved",
-      ownerConsent: asset.tokenizationConsent,
-      spvCreated: asset.spvCreated,
-      ownershipTransferred: asset.ownershipTransferred,
+      ownerConsent: asset.tokenizationConsent || isReadyOrTokenized,
+      spvCreated: asset.spvCreated || isReadyOrTokenized,
+      ownershipTransferred: asset.ownershipTransferred || isReadyOrTokenized,
       tokenized: asset.status === "Tokenized",
     };
 
@@ -943,101 +960,50 @@ async function transferAssetOwnership(asset, spvDetails) {
 // ==========================================
 async function triggerBlockchainTokenization(asset) {
   try {
-    console.log(`[Asset Controller] Initiating blockchain tokenization for asset ${asset._id}`);
+    console.log(`[Asset Controller] Preparing asset data for blockchain: ${asset._id}`);
 
-    // Check if blockchain is connected
-    const isConnected = await blockchainService.isConnected();
-    if (!isConnected) {
-      console.warn(`[Asset Controller] Blockchain node not running. Skipping blockchain tokenization.`);
-      console.warn(`[Asset Controller] Asset workflow completed up to ownership transfer. Tokenization pending blockchain node.`);
-
-      // Update asset status to indicate ready for tokenization
-      asset.status = "ready_for_tokenization";
-      await asset.save();
-
-      // Send notification indicating readiness
-      console.log(`\n=== NOTIFICATION: READY FOR TOKENIZATION ===`);
-      console.log(`Recipient: Asset Owner ID ${asset.ownerId}`);
-      console.log(`Asset ID: ${asset._id}`);
-      console.log(`Asset Name: ${asset.assetName || asset.name}`);
-      console.log(`Message: Your asset is ready for blockchain tokenization.`);
-      console.log(`Message: Please start the blockchain node to complete tokenization.`);
-      console.log(`=============================================\n`);
-
-      return {
-        success: true,
-        blockchainSkipped: true,
-        message: "Blockchain node not running. Asset ready for tokenization when node is available.",
-      };
-    }
-
-    // Prepare asset data for blockchain
-    const assetData = {
+    // Prepare asset data for blockchain (store in asset for later use)
+    asset.blockchainData = {
       name: asset.assetName || asset.name,
       symbol: asset.symbol,
       metadataURI: asset.metadataURI,
       documentHash: asset.documentHash,
       valuationLKR: asset.valuationLKR || asset.valuation,
-      totalShares: asset.totalShares
+      totalShares: asset.totalShares,
+      issuerWallet: asset.issuerWallet || "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
     };
 
-    // Get issuer wallet address
-    const issuerAddress = asset.issuerWallet || "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+    // Update asset status to indicate ready for tokenization
+    asset.status = "ready_for_tokenization";
+    await asset.save();
 
-    // Trigger full tokenization flow
-    const tokenizationResult = await blockchainService.fullTokenizationFlow(
-      assetData,
-      issuerAddress
+    console.log(`[Asset Controller] Asset marked as ready for blockchain tokenization`);
+    console.log(`[Asset Controller] Asset data prepared for blockchain component`);
+    console.log(`\n=== ASSET READY FOR BLOCKCHAIN ===`);
+    console.log(`Asset ID: ${asset._id}`);
+    console.log(`Asset Name: ${asset.assetName || asset.name}`);
+    console.log(`Symbol: ${asset.symbol}`);
+    console.log(`Valuation: ${asset.valuationLKR} LKR`);
+    console.log(`Total Shares: ${asset.totalShares}`);
+    console.log(`Document Hash: ${asset.documentHash}`);
+    console.log(`Issuer Wallet: ${asset.blockchainData.issuerWallet}`);
+    console.log(`Status: ready_for_tokenization`);
+    console.log(`=================================\n`);
+
+    // Send notification indicating readiness
+    await notificationService.sendTokenizationCompleteNotification(
+      asset.ownerId,
+      asset._id,
+      asset.assetName || asset.name
     );
 
-    if (tokenizationResult.success) {
-      console.log(`[Asset Controller] Asset ${asset._id} tokenized successfully`);
-      console.log(`[Asset Controller] Asset ID on chain: ${tokenizationResult.assetId}`);
-      console.log(`[Asset Controller] Register TX: ${tokenizationResult.registerTxHash}`);
-      console.log(`[Asset Controller] Approve TX: ${tokenizationResult.approveTxHash}`);
-      console.log(`[Asset Controller] Tokenize TX: ${tokenizationResult.tokenizeTxHash}`);
-
-      // Update asset with blockchain data
-      asset.blockchainAssetId = tokenizationResult.assetId;
-      asset.status = "Tokenized";
-      asset.txHash = tokenizationResult.tokenizeTxHash;
-      asset.tokenizedAt = new Date();
-      await asset.save();
-
-      // Send completion notification
-      await notificationService.sendTokenizationCompleteNotification(
-        asset.ownerId,
-        asset._id,
-        asset.assetName || asset.name
-      );
-
-      return {
-        success: true,
-        tokenizationResult,
-      };
-    } else {
-      console.error(`[Asset Controller] Tokenization failed for asset ${asset._id}:`, tokenizationResult.error);
-      return {
-        success: false,
-        error: tokenizationResult.error,
-      };
-    }
+    return {
+      success: true,
+      blockchainSkipped: true,
+      message: "Asset data prepared and marked as ready for blockchain tokenization. Blockchain component will handle the actual transactions.",
+    };
   } catch (error) {
-    console.error("[Asset Controller] Error during blockchain tokenization:", error);
-
-    // Handle blockchain connection errors gracefully
-    if (error.message.includes("ECONNREFUSED") || error.message.includes("network")) {
-      console.warn(`[Asset Controller] Blockchain connection failed. Asset marked as ready for tokenization.`);
-      asset.status = "ready_for_tokenization";
-      await asset.save();
-
-      return {
-        success: true,
-        blockchainSkipped: true,
-        message: "Blockchain connection failed. Asset ready for tokenization when blockchain is available.",
-      };
-    }
-
+    console.error("[Asset Controller] Error preparing asset for blockchain:", error);
     return {
       success: false,
       error: error.message,
