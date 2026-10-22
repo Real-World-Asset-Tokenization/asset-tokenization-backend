@@ -43,7 +43,7 @@ const AssetModel = mongoose.models.Asset;
 // ==========================================
 export async function uploadAsset(req, res) {
   try {
-    const { assetName, assetType, valuation, currency } = req.body;
+    const { assetName, assetType, valuation, currency, location, latitude, longitude, address } = req.body;
     const userId = req.user.userId;
 
     const user = await User.findById(userId);
@@ -100,6 +100,24 @@ export async function uploadAsset(req, res) {
       });
     }
 
+    // Handle asset images (up to 5)
+    const images = [];
+    const imageFiles = req.files?.images || [];
+    const maxImages = 5;
+
+    for (let i = 0; i < Math.min(imageFiles.length, maxImages); i++) {
+      const file = imageFiles[i];
+      if (file) {
+        images.push({
+          url: convertToHttpUrl(file.path),
+          publicId: file.filename,
+        });
+      }
+    }
+
+    // Use the first image as the main imageUrl for compatibility
+    const mainImageUrl = images.length > 0 ? images[0].url : "";
+
     // Generate required fields with defaults
     const assetIdNumber = Date.now() % 1000000; // Simple numeric ID
     const totalSharesVal = Number(req.body.totalShares) || 1;
@@ -113,10 +131,17 @@ export async function uploadAsset(req, res) {
       name: assetName,
       assetType,
       propertyType: assetType,
-      location: req.body.location || "Unknown",
+      location: location || "Unknown",
+      coordinates: {
+        latitude: latitude ? Number(latitude) : null,
+        longitude: longitude ? Number(longitude) : null,
+        address: address || "",
+      },
       document: documents.deed.url,
       documentPublicId: documents.deed.publicId,
       documents,
+      images,
+      imageUrl: mainImageUrl,
       valuation: valuationNum,
       valuationLKR: valuationNum,
       currency: currency || "LKR",
@@ -153,6 +178,8 @@ export async function uploadAsset(req, res) {
             Boolean(value),
           ])
         ),
+        images: images.map(img => img.url),
+        coordinates: asset.coordinates,
       },
     });
   } catch (error) {
@@ -399,6 +426,12 @@ export async function getUserAssets(req, res) {
             riskScore: asset.riskScore,
             rejectionReason: asset.rejectionReason,
             documents: assetObj.documents,
+            images: assetObj.images?.map(img => ({
+              url: convertToHttpUrl(img.url),
+              publicId: img.publicId,
+            })) || [],
+            imageUrl: assetObj.imageUrl ? convertToHttpUrl(assetObj.imageUrl) : "",
+            coordinates: assetObj.coordinates,
             createdAt: asset.createdAt,
           };
         }),

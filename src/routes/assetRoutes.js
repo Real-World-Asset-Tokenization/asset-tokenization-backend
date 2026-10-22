@@ -86,6 +86,11 @@ const assetValidation = [
     .optional()
     .isLength({ min: 3, max: 3 })
     .withMessage("Currency must be 3 characters (e.g., LKR)"),
+
+  body("location")
+    .trim()
+    .notEmpty()
+    .withMessage("Location is required"),
 ];
 
 // ==========================================
@@ -159,6 +164,7 @@ router.post(
     { name: "priorDeeds", maxCount: 1 },
     { name: "certificates", maxCount: 1 },
     { name: "document", maxCount: 1 },
+    { name: "images", maxCount: 5 },
   ]),
   uploadToCloudinaryMiddleware("asset-documents"),
   assetValidation,
