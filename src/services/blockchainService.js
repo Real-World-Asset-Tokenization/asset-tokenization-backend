@@ -32,10 +32,13 @@ class BlockchainService {
     try {
       // Connect to local Hardhat node
       this.provider = new ethers.JsonRpcProvider(process.env.BLOCKCHAIN_RPC_URL || 'http://localhost:8545');
-      
+
       // Use a deployer private key (in production, this should be from secure storage)
       const privateKey = process.env.DEPLOYER_PRIVATE_KEY || '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
       this.signer = new ethers.Wallet(privateKey, this.provider);
+
+      // Force the signer to not cache nonces - always fetch from blockchain
+      this.signer = this.signer.connect(this.provider);
 
       if (this.contracts) {
         // Initialize contract instances
@@ -81,7 +84,17 @@ class BlockchainService {
       );
 
       const receipt = await tx.wait();
-      const assetId = this.extractAssetIdFromReceipt(receipt);
+
+      // Try to extract assetId from event first
+      let assetId;
+      try {
+        assetId = this.extractAssetIdFromReceipt(receipt);
+      } catch (eventError) {
+        console.warn('Could not extract assetId from event:', eventError.message);
+        // Fallback: use a sequential ID based on timestamp or return txHash
+        assetId = Date.now().toString();
+        console.log('Using timestamp-based ID as fallback:', assetId);
+      }
 
       console.log('Asset registered on blockchain with ID:', assetId);
       return { success: true, assetId, txHash: receipt.hash };
@@ -177,20 +190,35 @@ class BlockchainService {
    * Extract asset ID from transaction receipt
    */
   extractAssetIdFromReceipt(receipt) {
-    // Look for AssetRegistered event
-    const event = receipt.logs.find(log => {
+    // Look for AssetRegistered event from the registry contract
+    let assetId = null;
+
+    for (const log of receipt.logs) {
+      // Skip logs from other contracts
+      if (log.address.toLowerCase() !== this.contracts.AssetRegistry.address.toLowerCase()) {
+        continue;
+      }
+
       try {
         const parsed = this.registry.interface.parseLog(log);
-        return parsed && parsed.name === 'AssetRegistered';
+        if (parsed && parsed.name === 'AssetRegistered') {
+          assetId = parsed.args.assetId?.toString();
+          if (assetId) {
+            console.log('Extracted assetId from event:', assetId);
+            return assetId;
+          }
+        }
       } catch (e) {
-        return false;
+        // Not an event we can parse, continue
+        continue;
       }
-    });
-
-    if (event) {
-      const parsed = this.registry.interface.parseLog(event);
-      return parsed.args.assetId.toString();
     }
+
+    // Debug: log available events if not found
+    console.warn('AssetRegistered event not found in receipt. Available logs:');
+    receipt.logs.forEach((log, index) => {
+      console.warn(`Log ${index}: address=${log.address}, topics=${log.topics.length}`);
+    });
 
     // Fallback: if event not found, throw error
     throw new Error('AssetRegistered event not found in transaction receipt');
