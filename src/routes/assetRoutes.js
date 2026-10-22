@@ -27,6 +27,7 @@ import {
 import { Asset } from "../models/Asset.js";
 import { syncAllWithChain, chainStatusFor } from "../services/chainSyncService.js";
 import { protect, authorize } from "../middleware/auth.js";
+import gasAnalyticsService from "../services/GasAnalyticsService.js";
 import {
   upload,
   uploadToCloudinaryMiddleware,
@@ -410,6 +411,7 @@ router.post("/:id/buy", protect, async (req, res) => {
     );
 
     const receipt = await tx.wait();
+    await gasAnalyticsService.recordPlatformReceipt(receipt, "DirectTransfer", { assetId });
 
     const remainingAvailable =
       await tokenContract.balanceOf(
@@ -559,6 +561,7 @@ router.post("/swap", protect, async (req, res) => {
     );
 
     const receipt = await tx.wait();
+    await gasAnalyticsService.recordPlatformReceipt(receipt, "DirectTransfer", { assetId: tgtId });
 
     const userSourceBalance =
       await tokenContract.balanceOf(userAddress, srcId);

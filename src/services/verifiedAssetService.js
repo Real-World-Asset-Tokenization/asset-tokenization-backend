@@ -3,6 +3,31 @@ import { TokenizationRecord } from "../models/TokenizationRecord.js";
 import { TokenPricingService } from "./tokenPricingService.js";
 import blockchainReconciler from "./blockchainReconciliationService.js";
 import { invalidateChainSync } from "./chainSyncService.js";
+import { loadChain } from "./chainContracts.js";
+
+// Asks the chain what tokenizing this asset would cost right now. Null when it cannot be estimated
+// (for example the asset is not approved yet, or the node is unreachable): never a made-up number.
+export async function estimateTokenizationFee(onChainAssetId, ownerWallet) {
+  if (onChainAssetId == null || !ownerWallet) return { gasUnits: null, gasPriceGwei: null, feeEth: null };
+  let chain;
+  try {
+    chain = loadChain();
+    const [gas, feeData] = await Promise.all([
+      chain.assetToken.tokenize.estimateGas(onChainAssetId, { from: ownerWallet }),
+      chain.provider.getFeeData()
+    ]);
+    const price = feeData.maxFeePerGas ?? feeData.gasPrice;
+    return {
+      gasUnits: Number(gas),
+      gasPriceGwei: price != null ? Number(price) / 1e9 : null,
+      feeEth: price != null ? Number(gas * price) / 1e18 : null
+    };
+  } catch {
+    return { gasUnits: null, gasPriceGwei: null, feeEth: null };
+  } finally {
+    chain?.destroy();
+  }
+}
 
 export class VerifiedAssetService {
   static async resolveRegisteredAsset(asset) {
@@ -144,6 +169,7 @@ export class VerifiedAssetService {
       : !isApproved ? "This asset requires approval in the on-chain registry before tokenizing."
       : null;
 
+    const fee = isApproved ? await estimateTokenizationFee(onChainAssetId, asset.issuerWallet || asset.ownerAddress) : { gasUnits: null, gasPriceGwei: null, feeEth: null };
     const valuation = asset.valuationLKR || asset.valuation || 10000000;
     const totalShares = asset.totalShares || 1000;
     const pricing = TokenPricingService.calculateReferencePrice(valuation, totalShares);
@@ -166,7 +192,9 @@ export class VerifiedAssetService {
       existingStatus: isAlreadyTokenized ? "TOKENIZED" : isApproved ? "VERIFIED_ELIGIBLE" : "REGISTRATION_REQUIRED",
       documentHash: asset.documentHash,
       metadataURI: asset.metadataURI,
-      estimatedGasUnits: 251218, // Measured from Hardhat benchmark test
+      estimatedGasUnits: fee.gasUnits,
+      estimatedGasPriceGwei: fee.gasPriceGwei,
+      estimatedFeeEth: fee.feeEth,
     };
   }
 

@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import ownershipIndexer from "./OwnershipIndexer.js";
 import profitCalculationService from "./ProfitCalculationService.js";
 import merkleDistributionService from "./MerkleDistributionService.js";
+import gasAnalyticsService from "./GasAnalyticsService.js";
 import FinancialReport from "../models/FinancialReport.js";
 import DistributionRound from "../models/DistributionRound.js";
 
@@ -162,13 +163,18 @@ class DistributionCoordinator {
     )).wait();
 
     // The round now exists on-chain, so save it before funding.
+    await gasAnalyticsService.recordPlatformReceipt(receiptCreate, "DistributionPublish", { assetId, roundId });
     await merkleDistributionService.persistDistribution(built, { txHashPublish: receiptCreate.hash });
     if (report) await FinancialReport.updateOne({ reportId: report.reportId }, { distributionRoundId: roundId });
 
     try {
-      await (await this.paymentTokenContract.approve(this.distributionContractAddress, totalPayoutBig, { nonce: nonce++ })).wait();
+      const receiptApprove = await (await this.paymentTokenContract.approve(this.distributionContractAddress, totalPayoutBig, { nonce: nonce++ })).wait();
       const receiptFund = await (await this.profitDistributionContract.fundDistributionRound(roundId, totalPayoutBig, { nonce: nonce++ })).wait();
       const receiptActivate = await (await this.profitDistributionContract.activateDistributionRound(roundId, { nonce: nonce++ })).wait();
+
+      await gasAnalyticsService.recordPlatformReceipt(receiptApprove, "AdminOperation", { assetId, roundId });
+      await gasAnalyticsService.recordPlatformReceipt(receiptFund, "DistributionFunding", { assetId, roundId });
+      await gasAnalyticsService.recordPlatformReceipt(receiptActivate, "AdminOperation", { assetId, roundId });
 
       await DistributionRound.updateOne(
         { roundId },

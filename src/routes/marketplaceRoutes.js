@@ -151,12 +151,15 @@ router.post("/track-tx", async (req, res) => {
 
     const provider = new ethers.JsonRpcProvider(process.env.BLOCKCHAIN_RPC_URL || "http://127.0.0.1:8545");
     const receipt = await provider.getTransactionReceipt(txHash);
+    provider.destroy?.();
 
     if (!receipt) {
       return res.status(404).json({ success: false, message: "Transaction receipt not yet available" });
     }
 
-    const metric = await gasAnalyticsService.recordTransactionGas({
+    // The contract method, stage and who paid are read from the transaction itself. What the browser
+    // sent is only used when the transaction is not one of the platform contracts.
+    const metric = (await gasAnalyticsService.indexTransaction(txHash)) || (await gasAnalyticsService.recordTransactionGas({
       txHash: receipt.hash,
       blockNumber: receipt.blockNumber,
       operationType: operationType || "MarketplacePurchase",
@@ -165,7 +168,7 @@ router.post("/track-tx", async (req, res) => {
       payerAddress: payerAddress || receipt.from,
       payerCategory: payerCategory || "Investor",
       assetId
-    });
+    }));
 
     res.json({ success: true, data: metric });
   } catch (err) {

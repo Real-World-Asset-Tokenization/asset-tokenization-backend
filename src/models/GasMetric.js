@@ -17,7 +17,13 @@ const gasMetricSchema = new mongoose.Schema(
         "DistributionFunding",
         "ProfitClaim",
         "BaselineSnapshotPayout",
-        "AdminOperation"
+        "AdminOperation",
+        "SignedOrderPurchase",
+        "SaleOffer",
+        "SaleVote",
+        "SaleVoteRelay",
+        "SaleAdmin",
+        "SaleClaim"
       ],
       index: true
     },
@@ -26,7 +32,13 @@ const gasMetricSchema = new mongoose.Schema(
     totalFeeWei: { type: String, required: true },
     totalFeeEth: { type: Number, required: true },
     payerAddress: { type: String, required: true, lowercase: true },
-    payerCategory: { type: String, enum: ["Platform", "Investor"], default: "Investor" },
+    payerCategory: { type: String, enum: ["Platform", "AssetOwner", "Investor", "Relayer"], default: "Investor" },
+    // Business stage, contract and method come from decoding the mined transaction itself.
+    stage: { type: String, enum: ["Tokenization", "Listing", "Purchase", "Resale", "Voting", "Escrow", "Payout", "Other"], default: "Other", index: true },
+    contractName: { type: String },
+    contractMethod: { type: String },
+    // Which deployment the transaction belongs to, so a redeployed chain does not mix with old records.
+    deployment: { type: String, index: true },
     assetId: { type: Number },
     roundId: { type: Number },
     timestamp: { type: Date, default: Date.now, index: true }
@@ -54,7 +66,12 @@ const matchesFilter = (item, filter) => {
 const GasMetric = {
   async create(metricData) {
     if (isDbConnected()) {
-      return MongoGasMetric.create(metricData);
+      try {
+        return await MongoGasMetric.create(metricData);
+      } catch (err) {
+        if (err.code === 11000) return null; // already recorded
+        throw err;
+      }
     }
     const exists = inMemoryGas.some((g) => g.txHash === metricData.txHash);
     if (!exists) {

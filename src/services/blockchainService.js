@@ -2,6 +2,7 @@ import { ethers } from 'ethers';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import gasAnalyticsService from './GasAnalyticsService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -82,6 +83,7 @@ class BlockchainService {
 
       const receipt = await tx.wait();
       const assetId = this.extractAssetIdFromReceipt(receipt);
+      await gasAnalyticsService.recordPlatformReceipt(receipt, 'AdminOperation', { assetId });
 
       console.log('Asset registered on blockchain with ID:', assetId);
       return { success: true, assetId, txHash: receipt.hash };
@@ -104,6 +106,7 @@ class BlockchainService {
 
       const tx = await this.registry.approveAsset(assetId);
       const receipt = await tx.wait();
+      await gasAnalyticsService.recordPlatformReceipt(receipt, 'AdminOperation', { assetId });
 
       console.log('Asset approved on blockchain');
       return { success: true, txHash: receipt.hash };
@@ -126,6 +129,7 @@ class BlockchainService {
 
       const tx = await this.assetToken.tokenizeAsset(assetId, issuerAddress);
       const receipt = await tx.wait();
+      await gasAnalyticsService.recordPlatformReceipt(receipt, 'AssetTokenization', { assetId });
 
       console.log('Asset tokenized on blockchain');
       return { success: true, txHash: receipt.hash };

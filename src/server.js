@@ -15,6 +15,8 @@ import distributionRoutes from "./routes/distributionRoutes.js";
 import gasRoutes from "./routes/gasRoutes.js";
 import tokenizationRoutes from "./routes/tokenizationRoutes.js";
 import valuationRoutes from "./routes/valuationRoutes.js";
+import orderRoutes from "./routes/orderRoutes.js";
+import saleRoutes from "./routes/saleRoutes.js";
 
 import { pipelineVerify } from "./controllers/kycController.js";
 import { protect } from "./middleware/auth.js";
@@ -69,6 +71,12 @@ app.use("/api/compliance", requireDatabase, complianceRoutes);
 
 // Token Marketplace & secondary peer-to-peer trading
 app.use("/api/marketplace", marketplaceRoutes);
+
+// Off-chain signed sell orders (EIP-712): the seller signs, the buyer settles on-chain
+app.use("/api/orders", orderRoutes);
+
+// Full-property sale: buyer offers, token-holder voting (signed votes relayed in batches) and payout
+app.use("/api/sales", saleRoutes);
 
 // Financial reports & time-weighted profit calculation
 app.use("/api/profit", profitRoutes);

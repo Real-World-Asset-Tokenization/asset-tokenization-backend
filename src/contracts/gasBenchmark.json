@@ -1,0 +1,126 @@
+{
+  "generatedAt": "2026-10-22T06:20:06.793Z",
+  "blockGasLimit": 60000000,
+  "scenarios": [
+    {
+      "investorCount": 10,
+      "merkleTreeDepth": 4,
+      "proposedFramework": {
+        "platformSetupGas": 465581,
+        "setupBreakdown": {
+          "publishRoot": 270524,
+          "approveToken": 46331,
+          "fund": 94091,
+          "activate": 54635
+        },
+        "perInvestorClaimGas": 127415,
+        "totalInvestorGas": 1274150,
+        "totalNetworkGas": 1739731
+      },
+      "baselinePushFramework": {
+        "perTransferGas": 51556,
+        "totalNetworkGas": 515560
+      },
+      "baselineSnapshotFramework": {
+        "platformSetupGas": 253054,
+        "perInvestorClaimGas": 108707,
+        "totalInvestorGas": 1087070,
+        "totalNetworkGas": 1340124
+      },
+      "comparativeAnalysis": {
+        "platformGasSavingsVsPushPercent": 9.69,
+        "totalGasSavingsVsSnapshotPercent": -29.81
+      }
+    },
+    {
+      "investorCount": 100,
+      "merkleTreeDepth": 7,
+      "proposedFramework": {
+        "platformSetupGas": 465569,
+        "setupBreakdown": {
+          "publishRoot": 270512,
+          "approveToken": 46331,
+          "fund": 94091,
+          "activate": 54635
+        },
+        "perInvestorClaimGas": 128803,
+        "totalInvestorGas": 12880328,
+        "totalNetworkGas": 13345897
+      },
+      "baselinePushFramework": {
+        "perTransferGas": 51555,
+        "totalNetworkGas": 5155492
+      },
+      "baselineSnapshotFramework": {
+        "platformSetupGas": 253054,
+        "perInvestorClaimGas": 107168,
+        "totalInvestorGas": 10716800,
+        "totalNetworkGas": 10969854
+      },
+      "comparativeAnalysis": {
+        "platformGasSavingsVsPushPercent": 90.96,
+        "totalGasSavingsVsSnapshotPercent": -21.65
+      }
+    },
+    {
+      "investorCount": 500,
+      "merkleTreeDepth": 9,
+      "proposedFramework": {
+        "platformSetupGas": 465569,
+        "setupBreakdown": {
+          "publishRoot": 270512,
+          "approveToken": 46331,
+          "fund": 94091,
+          "activate": 54635
+        },
+        "perInvestorClaimGas": 130308,
+        "totalInvestorGas": 65154212,
+        "totalNetworkGas": 65619781
+      },
+      "baselinePushFramework": {
+        "perTransferGas": 51555,
+        "totalNetworkGas": 25777436
+      },
+      "baselineSnapshotFramework": {
+        "platformSetupGas": 253054,
+        "perInvestorClaimGas": 107031,
+        "totalInvestorGas": 53515600,
+        "totalNetworkGas": 53768654
+      },
+      "comparativeAnalysis": {
+        "platformGasSavingsVsPushPercent": 98.19,
+        "totalGasSavingsVsSnapshotPercent": -22.04
+      }
+    },
+    {
+      "investorCount": 1000,
+      "merkleTreeDepth": 10,
+      "proposedFramework": {
+        "platformSetupGas": 465581,
+        "setupBreakdown": {
+          "publishRoot": 270524,
+          "approveToken": 46331,
+          "fund": 94091,
+          "activate": 54635
+        },
+        "perInvestorClaimGas": 131049,
+        "totalInvestorGas": 131049000,
+        "totalNetworkGas": 131514581
+      },
+      "baselinePushFramework": {
+        "perTransferGas": 51555,
+        "totalNetworkGas": 51555172
+      },
+      "baselineSnapshotFramework": {
+        "platformSetupGas": 253054,
+        "perInvestorClaimGas": 107014,
+        "totalInvestorGas": 107014100,
+        "totalNetworkGas": 107267154
+      },
+      "comparativeAnalysis": {
+        "platformGasSavingsVsPushPercent": 99.09,
+        "totalGasSavingsVsSnapshotPercent": -22.6
+      }
+    }
+  ]
+}

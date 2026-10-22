@@ -1,6 +1,8 @@
 import User from "../models/User.js";
 import jwt from "jsonwebtoken";
 
+const SELF_REGISTER_ROLES = ["investor", "asset_owner", "compliance_officer"];
+
 // Generate JWT Token
 const generateToken = (userId, role) => {
   return jwt.sign(
@@ -14,6 +16,14 @@ const generateToken = (userId, role) => {
 export const register = async (req, res) => {
   try {
     const { name, email, password, role, walletAddress } = req.body;
+
+    // Administrators are created by an operator (npm run admin:create), never by sign-up.
+    if (role && !SELF_REGISTER_ROLES.includes(role)) {
+      return res.status(403).json({
+        success: false,
+        message: "This role cannot be chosen at sign-up",
+      });
+    }
 
     // Check if user already exists by email
     const existingUser = await User.findOne({ email });
