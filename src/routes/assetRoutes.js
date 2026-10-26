@@ -7,6 +7,7 @@ import { fileURLToPath } from "url";
 
 import {
   uploadAsset,
+  reuploadAssetDocuments,
   verifyAsset,
   getAssetStatus,
   getUserAssets,
@@ -170,6 +171,22 @@ router.post(
   assetValidation,
   validate,
   uploadAsset
+);
+
+// Re-upload asset documents (for rejected/failed verification)
+router.post(
+  "/:assetId/reupload",
+  protect,
+  upload.fields([
+    { name: "deed", maxCount: 1 },
+    { name: "surveyPlan", maxCount: 1 },
+    { name: "extracts", maxCount: 1 },
+    { name: "priorDeeds", maxCount: 1 },
+    { name: "certificates", maxCount: 1 },
+    { name: "images", maxCount: 5 },
+  ]),
+  uploadToCloudinaryMiddleware("asset-documents"),
+  reuploadAssetDocuments
 );
 
 // Request asset verification

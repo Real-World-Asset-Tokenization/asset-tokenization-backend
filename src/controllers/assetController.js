@@ -194,7 +194,138 @@ export async function uploadAsset(req, res) {
 }
 
 // ==========================================
-// 2. VERIFY ASSET
+// 2. RE-UPLOAD ASSET DOCUMENTS
+// ==========================================
+export async function reuploadAssetDocuments(req, res) {
+  try {
+    const { assetId } = req.params;
+    const userId = req.user.userId;
+
+    const asset = await AssetModel.findOne({
+      _id: assetId,
+      ownerId: userId,
+    });
+
+    if (!asset) {
+      return res.status(404).json({
+        success: false,
+        message: "Asset not found or you don't have permission to modify it",
+      });
+    }
+
+    // Only allow re-upload if verification failed or is pending
+    if (asset.verificationStatus === "approved") {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot re-upload documents for an approved asset",
+      });
+    }
+
+    // Initialize documents from existing asset
+    const documents = {
+      deed: asset.documents?.deed || null,
+      surveyPlan: asset.documents?.surveyPlan || null,
+      extracts: asset.documents?.extracts || null,
+      priorDeeds: asset.documents?.priorDeeds || null,
+      certificates: asset.documents?.certificates || null,
+    };
+
+    const fileFields = [
+      "deed",
+      "surveyPlan",
+      "extracts",
+      "priorDeeds",
+      "certificates",
+    ];
+
+    for (const field of fileFields) {
+      const file = req.files?.[field]?.[0];
+
+      if (file) {
+        documents[field] = {
+          url: convertToHttpUrl(file.path),
+          publicId: file.filename,
+        };
+      }
+    }
+
+    // Handle asset images (up to 5)
+    const images = asset.images || [];
+    const imageFiles = req.files?.images || [];
+    const maxImages = 5;
+
+    // Replace existing images with new ones if provided
+    if (imageFiles.length > 0) {
+      images.length = 0; // Clear existing images
+      for (let i = 0; i < Math.min(imageFiles.length, maxImages); i++) {
+        const file = imageFiles[i];
+        if (file) {
+          images.push({
+            url: convertToHttpUrl(file.path),
+            publicId: file.filename,
+          });
+        }
+      }
+    }
+
+    // Use the first image as the main imageUrl
+    const mainImageUrl = images.length > 0 ? images[0].url : asset.imageUrl;
+
+    if (!documents.deed || !documents.surveyPlan) {
+      return res.status(400).json({
+        success: false,
+        message: "Deed and Survey Plan are required",
+      });
+    }
+
+    // Update asset with new documents using dot notation to avoid Mongoose cast errors
+    asset.documents.deed = documents.deed;
+    asset.documents.surveyPlan = documents.surveyPlan;
+    asset.documents.extracts = documents.extracts;
+    asset.documents.priorDeeds = documents.priorDeeds;
+    asset.documents.certificates = documents.certificates;
+    asset.images = images;
+    asset.imageUrl = mainImageUrl;
+    asset.verificationStatus = "pending";
+    asset.status = "Pending";
+    asset.documentAuthentic = false;
+    asset.ownershipVerified = false;
+    asset.riskScore = undefined;
+    asset.clarityScore = undefined;
+    asset.pipelineResults = undefined;
+    asset.verifiedAt = undefined;
+
+    await asset.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Asset documents re-uploaded successfully. Please run verification again.",
+      data: {
+        assetId: asset._id,
+        assetName: asset.assetName,
+        verificationStatus: asset.verificationStatus,
+        documents: Object.fromEntries(
+          Object.entries(documents).map(([key, value]) => [
+            key,
+            Boolean(value),
+          ])
+        ),
+        images: images.map(img => img.url),
+      },
+    });
+  } catch (error) {
+    console.error("Re-upload asset documents error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Error re-uploading asset documents",
+      error: error.message,
+    });
+  }
+}
+
+// ==========================================
+// 3. VERIFY ASSET
 // ==========================================
 export async function verifyAsset(req, res) {
   let documentPath;

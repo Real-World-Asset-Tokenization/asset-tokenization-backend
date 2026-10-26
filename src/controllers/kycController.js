@@ -258,6 +258,82 @@ export const uploadSelfie = async (req, res) => {
   }
 };
 
+// ── Re-upload KYC Documents (for failed verification) ───────────────────────
+export const reuploadKYCDocuments = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { idType, idNumber } = req.body;
+
+    const kyc = await KYC.findOne({ userId });
+    if (!kyc) {
+      return res.status(404).json({
+        success: false,
+        message: "KYC record not found",
+      });
+    }
+
+    // Only allow re-upload if verification failed or is pending
+    if (kyc.verificationStatus === "approved") {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot re-upload documents for an approved KYC",
+      });
+    }
+
+    let documentImage = kyc.documentImage;
+    let documentPublicId = kyc.documentPublicId;
+    let selfie = kyc.selfie;
+    let selfiePublicId = kyc.selfiePublicId;
+
+    // Handle document re-upload
+    if (req.files?.document?.[0]) {
+      documentImage = convertToHttpUrl(req.files.document[0].path);
+      documentPublicId = req.files.document[0].filename;
+    }
+
+    // Handle selfie re-upload
+    if (req.files?.selfie?.[0]) {
+      selfie = convertToHttpUrl(req.files.selfie[0].path);
+      selfiePublicId = req.files.selfie[0].filename;
+    }
+
+    // Reset verification status and clear previous results
+    kyc.documentImage = documentImage;
+    kyc.documentPublicId = documentPublicId;
+    kyc.selfie = selfie;
+    kyc.selfiePublicId = selfiePublicId;
+    kyc.idType = idType || kyc.idType;
+    kyc.idNumber = idNumber || kyc.idNumber;
+    kyc.verificationStatus = "pending";
+    kyc.faceScore = undefined;
+    kyc.riskScore = undefined;
+    kyc.documentAuthentic = false;
+    kyc.ocrData = undefined;
+    kyc.pipelineResults = undefined;
+    kyc.verifiedAt = undefined;
+
+    await kyc.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "KYC documents re-uploaded successfully. Please run verification again.",
+      data: {
+        kycId: kyc._id,
+        documentImage: kyc.documentImage,
+        selfie: kyc.selfie,
+        verificationStatus: kyc.verificationStatus,
+      },
+    });
+  } catch (error) {
+    console.error("Re-upload KYC documents error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error re-uploading KYC documents",
+      error: error.message,
+    });
+  }
+};
+
 // ── Verify KYC (user-triggered, runs real AI pipeline) ──────────────────────
 export const verifyKYC = async (req, res) => {
   try {
