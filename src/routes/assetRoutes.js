@@ -7,6 +7,7 @@ import { fileURLToPath } from "url";
 
 import {
   uploadAsset,
+  reuploadAssetDocuments,
   verifyAsset,
   getAssetStatus,
   getUserAssets,
@@ -86,6 +87,11 @@ const assetValidation = [
     .optional()
     .isLength({ min: 3, max: 3 })
     .withMessage("Currency must be 3 characters (e.g., LKR)"),
+
+  body("location")
+    .trim()
+    .notEmpty()
+    .withMessage("Location is required"),
 ];
 
 // ==========================================
@@ -159,11 +165,28 @@ router.post(
     { name: "priorDeeds", maxCount: 1 },
     { name: "certificates", maxCount: 1 },
     { name: "document", maxCount: 1 },
+    { name: "images", maxCount: 5 },
   ]),
   uploadToCloudinaryMiddleware("asset-documents"),
   assetValidation,
   validate,
   uploadAsset
+);
+
+// Re-upload asset documents (for rejected/failed verification)
+router.post(
+  "/:assetId/reupload",
+  protect,
+  upload.fields([
+    { name: "deed", maxCount: 1 },
+    { name: "surveyPlan", maxCount: 1 },
+    { name: "extracts", maxCount: 1 },
+    { name: "priorDeeds", maxCount: 1 },
+    { name: "certificates", maxCount: 1 },
+    { name: "images", maxCount: 5 },
+  ]),
+  uploadToCloudinaryMiddleware("asset-documents"),
+  reuploadAssetDocuments
 );
 
 // Request asset verification

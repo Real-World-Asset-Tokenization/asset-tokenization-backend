@@ -68,10 +68,32 @@ const assetSchema = new mongoose.Schema({
     required: true,
   },
 
+  // Geolocation coordinates
+  coordinates: {
+    latitude: {
+      type: Number,
+      default: null,
+    },
+    longitude: {
+      type: Number,
+      default: null,
+    },
+    address: {
+      type: String,
+      default: "",
+    },
+  },
+
   description: {
     type: String,
     default: "",
   },
+
+  // Multiple asset images (up to 5)
+  images: [{
+    url: String,
+    publicId: String,
+  }],
 
   // ==========================================
   // 3. VALUATION & TOKENIZATION

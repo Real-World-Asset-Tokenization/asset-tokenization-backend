@@ -3,6 +3,7 @@ import { body, validationResult } from "express-validator";
 import {
   uploadDocument,
   uploadSelfie,
+  reuploadKYCDocuments,
   verifyKYC,
   getKYCStatus,
   adminVerifyKYC,
@@ -60,6 +61,18 @@ router.post(
   upload.single("selfie"),
   uploadToCloudinaryMiddleware('kyc-selfies'),
   uploadSelfie
+);
+
+// Re-upload KYC documents (for failed verification)
+router.post(
+  "/reupload",
+  protect,
+  upload.fields([
+    { name: "document", maxCount: 1 },
+    { name: "selfie", maxCount: 1 },
+  ]),
+  uploadToCloudinaryMiddleware('kyc-documents'),
+  reuploadKYCDocuments
 );
 
 router.post("/verify", protect, verifyKYC);
