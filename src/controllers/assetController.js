@@ -13,6 +13,7 @@ import aiService from "../services/aiService.js";
 import blockchainService from "../services/blockchainService.js";
 import { VerifiedAssetService } from "../services/verifiedAssetService.js";
 import blockchainReconciler from "../services/blockchainReconciliationService.js";
+import { asString, escapeRegex } from "../config/security.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -710,13 +711,15 @@ export async function getAssets(req, res) {
   try {
     const filter = {};
 
+    // Query-string values can be objects (?status[$ne]=x), so force plain strings before querying.
     if (req.query.status) {
-      filter.status = req.query.status;
+      filter.status = asString(req.query.status);
     }
 
-    const issuerParam = req.query.issuer || req.query.owner || req.query.ownerWallet;
+    const issuerParam = asString(req.query.issuer || req.query.owner || req.query.ownerWallet);
     if (issuerParam) {
-      filter.issuerWallet = { $regex: new RegExp(`^${issuerParam}$`, "i") };
+      // Escaped, so user input is matched literally and cannot inject a pattern (ReDoS / wildcard).
+      filter.issuerWallet = { $regex: new RegExp(`^${escapeRegex(issuerParam)}$`, "i") };
     }
 
     const assets = await Asset.find(filter);

@@ -1,7 +1,7 @@
 import express from "express";
 import { protect } from "../middleware/auth.js";
 import { requireDatabase } from "../middleware/requireDatabase.js";
-import { upload } from "../middleware/upload.js";
+import { upload, verifyUploadContents } from "../middleware/upload.js";
 import { loadUser, requirePermission, hasPermission } from "../middleware/valuationPermissions.js";
 import * as valuations from "../services/valuation/valuationService.js";
 import * as approvals from "../services/valuation/valuationApprovalService.js";
@@ -62,7 +62,7 @@ router.get("/review-requests", ...signedIn, requirePermission(PROPOSE, APPROVE),
   valuations.listReviewRequests({ status: req.query.status || "OPEN", assetId: req.query.assetId })));
 
 /** Submit a MANUAL proposal. Multipart: optional `document` file (PDF/JPG/PNG, 5 MB). */
-router.post("/proposals", ...signedIn, requirePermission(PROPOSE), upload.single("document"), handle(async (req, res) => {
+router.post("/proposals", ...signedIn, requirePermission(PROPOSE), upload.single("document"), verifyUploadContents, handle(async (req, res) => {
   if (req.body.source && req.body.source !== "MANUAL") {
     const err = new Error("Only MANUAL proposals can be submitted here"); err.status = 400; throw err;
   }

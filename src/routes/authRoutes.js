@@ -43,11 +43,11 @@ const registerValidation = [
   body("password")
     .notEmpty()
     .withMessage("Password is required")
-    .isLength({ min: 6 })
-    .withMessage("Password must be at least 6 characters"),
+    .isLength({ min: 8, max: 128 })
+    .withMessage("Password must be 8-128 characters"),
   body("role")
     .optional()
-    .isIn(["investor", "asset_owner", "admin", "compliance_officer"])
+    .isIn(["investor", "asset_owner"])
     .withMessage("Invalid role"),
   body("walletAddress")
     .optional({ nullable: true, checkFalsy: true })
@@ -74,7 +74,9 @@ const loginValidation = [
     .withMessage("Please provide a valid email")
     .normalizeEmail(),
   body("password")
+    .isString()
     .notEmpty()
+    .isLength({ max: 128 })
     .withMessage("Password is required"),
 ];
 

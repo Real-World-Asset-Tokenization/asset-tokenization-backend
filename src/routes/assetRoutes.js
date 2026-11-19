@@ -28,6 +28,27 @@ import { Asset } from "../models/Asset.js";
 import { syncAllWithChain, chainStatusFor } from "../services/chainSyncService.js";
 import { protect, authorize } from "../middleware/auth.js";
 import gasAnalyticsService from "../services/GasAnalyticsService.js";
+import User from "../models/User.js";
+import { requireDemoMode } from "../config/security.js";
+
+// The wallet named in the request body must be the one linked to the signed-in account. Without this,
+// anyone with an account could send platform funds or tokens to a wallet of their choosing.
+const ownWalletOnly = (field) => async (req, res, next) => {
+  try {
+    const wanted = String(req.body?.[field] || "").toLowerCase();
+    const account = await User.findById(req.user.userId).select("walletAddress").lean();
+    if (!wanted || !account?.walletAddress || account.walletAddress.toLowerCase() !== wanted) {
+      return res.status(403).json({
+        success: false,
+        error: "The wallet must be the one linked to your account",
+      });
+    }
+    next();
+  } catch (error) {
+    console.error("Wallet ownership check failed:", error);
+    res.status(500).json({ success: false, error: "Unable to verify wallet ownership" });
+  }
+};
 import {
   upload,
   uploadToCloudinaryMiddleware,
@@ -238,7 +259,7 @@ router.get("/stats", getPlatformStats);
 // 4. DEVELOPMENT FAUCET
 // ==========================================
 
-router.post("/faucet", protect, async (req, res) => {
+router.post("/faucet", protect, requireDemoMode, ownWalletOnly("address"), async (req, res) => {
   try {
     const { address } = req.body;
 
@@ -312,7 +333,7 @@ router.post("/faucet", protect, async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      error: error.message,
+      error: "Transaction could not be completed",
     });
   }
 });
@@ -358,7 +379,7 @@ router.get("/:id/available", async (req, res) => {
 // 6. BUY FRACTIONAL SHARES
 // ==========================================
 
-router.post("/:id/buy", protect, async (req, res) => {
+router.post("/:id/buy", protect, requireDemoMode, ownWalletOnly("buyerAddress"), async (req, res) => {
   try {
     const { buyerAddress, amount, paymentTxHash } = req.body;
     const assetId = Number(req.params.id);
@@ -438,7 +459,7 @@ router.post("/:id/buy", protect, async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      error: error.message,
+      error: "Transaction could not be completed",
     });
   }
 });
@@ -447,7 +468,7 @@ router.post("/:id/buy", protect, async (req, res) => {
 // 7. SWAP PROPERTY SHARES
 // ==========================================
 
-router.post("/swap", protect, async (req, res) => {
+router.post("/swap", protect, requireDemoMode, ownWalletOnly("userAddress"), async (req, res) => {
   try {
     const {
       userAddress,
@@ -584,7 +605,7 @@ router.post("/swap", protect, async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      error: error.message,
+      error: "Transaction could not be completed",
     });
   }
 });

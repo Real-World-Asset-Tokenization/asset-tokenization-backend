@@ -5,6 +5,8 @@ import merkleDistributionService from "../services/MerkleDistributionService.js"
 import distributionCoordinator from "../services/DistributionCoordinator.js";
 import { protect, authorize } from "../middleware/auth.js";
 import { requireDatabase } from "../middleware/requireDatabase.js";
+import User from "../models/User.js";
+import { asString } from "../config/security.js";
 
 const adminOnly = [protect, authorize("admin", "compliance_officer")];
 
@@ -101,19 +103,28 @@ router.post("/execute", adminOnly, async (req, res) => {
  * POST /api/distribution/mark-claimed
  * Updates local database status after successful on-chain claim
  */
-router.post("/mark-claimed", async (req, res) => {
+router.post("/mark-claimed", protect, async (req, res) => {
   try {
-    const { roundId, walletAddress, txHash } = req.body;
-    if (!roundId || !walletAddress) {
-      return res.status(400).json({ success: false, message: "roundId and walletAddress are required" });
+    const roundId = Number(req.body.roundId);
+    const wallet = asString(req.body.walletAddress).toLowerCase().trim();
+    const txHash = asString(req.body.txHash);
+    if (!Number.isSafeInteger(roundId) || !/^0x[a-f0-9]{40}$/.test(wallet)) {
+      return res.status(400).json({ success: false, message: "roundId and a valid walletAddress are required" });
+    }
+
+    // Only the wallet's owner (or an operator) may record a claim for it.
+    const account = await User.findById(req.user.userId).select("walletAddress role").lean();
+    const isOperator = ["admin", "compliance_officer"].includes(account?.role);
+    if (!isOperator && account?.walletAddress !== wallet) {
+      return res.status(403).json({ success: false, message: "You can only record claims for your own wallet" });
     }
 
     await InvestorAllocation.updateOne(
-      { roundId: Number(roundId), walletAddress: walletAddress.toLowerCase() },
+      { roundId, walletAddress: wallet },
       {
         isClaimed: true,
         claimedAt: new Date(),
-        txHashClaim: txHash || ""
+        txHashClaim: txHash
       }
     );
 

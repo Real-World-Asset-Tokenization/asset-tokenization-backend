@@ -2,6 +2,8 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import morgan from "morgan";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 
 import { connectDB, isDbConnected } from "./config/db.js";
 
@@ -21,27 +23,28 @@ import saleRoutes from "./routes/saleRoutes.js";
 import { pipelineVerify } from "./controllers/kycController.js";
 import { protect } from "./middleware/auth.js";
 import { requireDatabase } from "./middleware/requireDatabase.js";
+import { assertSecureEnvironment, allowedOrigins, isProduction } from "./config/security.js";
 
 dotenv.config();
+assertSecureEnvironment();
 
 const app = express();
 const PORT = process.env.PORT || 5001;
 
 // ==================== MIDDLEWARE ====================
 
+// Behind a reverse proxy / load balancer, trust it so rate limiting sees the real client IP.
+if (process.env.TRUST_PROXY) app.set("trust proxy", Number(process.env.TRUST_PROXY) || 1);
+app.disable("x-powered-by");
+app.use(helmet());
+
+const origins = allowedOrigins();
 app.use(
   cors({
+    // Requests without an Origin header (curl, server-to-server) are not browser cross-site requests.
     origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      if (
-        origin === "http://localhost:5173" ||
-        origin === "http://127.0.0.1:5173" ||
-        origin === process.env.FRONTEND_URL ||
-        /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
-      ) {
-        return callback(null, true);
-      }
-      return callback(null, true);
+      if (!origin || origins.has(origin)) return callback(null, true);
+      return callback(null, false);
     },
     credentials: true,
     methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
@@ -50,10 +53,18 @@ app.use(
   })
 );
 
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true }));
+const limiter = (windowMs, max, message) =>
+  rateLimit({ windowMs, max, standardHeaders: true, legacyHeaders: false, message: { success: false, message } });
 
-app.use(morgan("dev"));
+// Brute-force protection on credentials, and a general ceiling on everything else.
+app.use("/api/auth/login", limiter(15 * 60 * 1000, 10, "Too many login attempts. Try again later."));
+app.use("/api/auth/register", limiter(60 * 60 * 1000, 20, "Too many sign-up attempts. Try again later."));
+app.use("/api", limiter(60 * 1000, 300, "Too many requests. Slow down."));
+
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+
+app.use(morgan(isProduction() ? "combined" : "dev"));
 
 // ==================== API ROUTES ====================
 

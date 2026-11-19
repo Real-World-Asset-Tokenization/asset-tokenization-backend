@@ -16,6 +16,8 @@ const deployedPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "..
 
 
 import { requireDatabase } from "../middleware/requireDatabase.js";
+import User from "../models/User.js";
+import { asString, escapeRegex } from "../config/security.js";
 
 const router = express.Router();
 // Account-specific data must never be answered from unrelated demo seeds.
@@ -160,10 +162,15 @@ router.get("/ownership/:assetId/:walletAddress", async (req, res) => {
  * @route   GET /api/tokenization/history
  * @desc    Get history of confirmed tokenization transactions and blockchain events
  */
-router.get("/history", async (req, res) => {
+router.get("/history", protect, async (req, res) => {
   try {
-    const ownerWallet = req.query.ownerWallet || null;
-    const query = ownerWallet ? { ownerWallet } : {};
+    const account = await User.findById(req.user.userId).select("walletAddress role").lean();
+    const isOperator = ["admin", "compliance_officer"].includes(account?.role);
+    // Operators may filter by any owner; everyone else only ever sees their own wallet's records.
+    const requested = asString(req.query.ownerWallet).trim();
+    const ownerWallet = isOperator ? requested : account?.walletAddress || "";
+    if (!isOperator && !ownerWallet) return res.json({ success: true, count: 0, data: [] });
+    const query = ownerWallet ? { ownerWallet: new RegExp(`^${escapeRegex(ownerWallet)}$`, "i") } : {};
     const records = await TokenizationRecord.find(query);
     res.json({
       success: true,
@@ -171,7 +178,8 @@ router.get("/history", async (req, res) => {
       data: records,
     });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error("Tokenization history error:", err);
+    res.status(500).json({ success: false, error: "Unable to load tokenization history" });
   }
 });
 
@@ -179,9 +187,12 @@ router.get("/history", async (req, res) => {
  * @route   POST /api/tokenization/confirm
  * @desc    Verify transaction receipt from blockchain and record tokenization in Azure Cosmos DB
  */
-router.post("/confirm", async (req, res) => {
+router.post("/confirm", protect, async (req, res) => {
   try {
-    const { assetId, txHash, ownerWallet } = req.body;
+    // The expected owner always comes from the stored asset, never from the request.
+    const assetId = Number(req.body.assetId);
+    const txHash = asString(req.body.txHash);
+    const ownerWallet = undefined;
     if (!assetId || !txHash) {
       return res.status(400).json({
         success: false,

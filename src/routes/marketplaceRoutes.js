@@ -142,11 +142,13 @@ router.get("/listings", async (req, res) => {
  * POST /api/marketplace/track-tx
  * Records transaction gas and fee metrics
  */
-router.post("/track-tx", async (req, res) => {
+router.post("/track-tx", protect, async (req, res) => {
   try {
-    const { txHash, operationType, payerAddress, payerCategory, assetId } = req.body;
-    if (!txHash) {
-      return res.status(400).json({ success: false, message: "txHash is required" });
+    const txHash = String(req.body.txHash || "");
+    const operationType = String(req.body.operationType || "");
+    const assetId = req.body.assetId;
+    if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+      return res.status(400).json({ success: false, message: "A valid txHash is required" });
     }
 
     const provider = new ethers.JsonRpcProvider(process.env.BLOCKCHAIN_RPC_URL || "http://127.0.0.1:8545");
@@ -165,8 +167,9 @@ router.post("/track-tx", async (req, res) => {
       operationType: operationType || "MarketplacePurchase",
       gasUsed: receipt.gasUsed,
       effectiveGasPrice: receipt.gasPrice || receipt.effectiveGasPrice,
-      payerAddress: payerAddress || receipt.from,
-      payerCategory: payerCategory || "Investor",
+      // Who paid is the transaction's sender, never a value the browser supplies.
+      payerAddress: receipt.from,
+      payerCategory: "Investor",
       assetId
     }));
 

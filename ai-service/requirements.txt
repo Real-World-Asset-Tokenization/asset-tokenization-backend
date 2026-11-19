@@ -14,3 +14,5 @@ pytesseract>=0.3.10
 cloudinary>=1.36.0
 issynthetic>=0.1.0
 imagehash>=4.3.2
+
+python-dotenv>=1.0.0

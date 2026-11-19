@@ -1,21 +1,27 @@
 import User from "../models/User.js";
 import jwt from "jsonwebtoken";
+import { asString } from "../config/security.js";
 
-const SELF_REGISTER_ROLES = ["investor", "asset_owner", "compliance_officer"];
+// compliance_officer is a privileged role (it approves KYC and asset verification), so it is granted by an
+// administrator, never chosen at sign-up.
+const SELF_REGISTER_ROLES = ["investor", "asset_owner"];
 
 // Generate JWT Token
 const generateToken = (userId, role) => {
   return jwt.sign(
     { userId, role },
     process.env.JWT_SECRET,
-    { expiresIn: "7d" }
+    { expiresIn: process.env.JWT_EXPIRES_IN || "8h", algorithm: "HS256" }
   );
 };
 
 // Register User
 export const register = async (req, res) => {
   try {
-    const { name, email, password, role, walletAddress } = req.body;
+    const { name, role, walletAddress } = req.body;
+    // Force plain strings so a JSON body like {"email": {"$ne": null}} cannot become a query operator.
+    const email = asString(req.body.email).trim().toLowerCase();
+    const password = asString(req.body.password);
 
     // Administrators are created by an operator (npm run admin:create), never by sign-up.
     if (role && !SELF_REGISTER_ROLES.includes(role)) {
@@ -91,7 +97,6 @@ export const register = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error registering user",
-      error: error.message,
     });
   }
 };
@@ -99,7 +104,8 @@ export const register = async (req, res) => {
 // Login User
 export const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const email = asString(req.body.email).trim().toLowerCase();
+    const password = asString(req.body.password);
 
     // Find user and include password for comparison
     const user = await User.findOne({ email }).select("+password");
@@ -143,7 +149,6 @@ export const login = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error logging in",
-      error: error.message,
     });
   }
 };
@@ -179,7 +184,6 @@ export const getMe = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching user data",
-      error: error.message,
     });
   }
 };
@@ -239,7 +243,6 @@ export const verifyUser = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error verifying user",
-      error: error.message,
     });
   }
 };
@@ -280,7 +283,6 @@ export const getAllUsers = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching users",
-      error: error.message,
     });
   }
 };
@@ -354,7 +356,6 @@ export const updateWallet = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error updating wallet",
-      error: error.message,
     });
   }
 };
@@ -373,6 +374,6 @@ export const checkWallet = async (req, res) => {
     res.status(200).json({ success: true, data: { walletAddress: wallet, status } });
   } catch (error) {
     console.error("Check wallet error:", error);
-    res.status(500).json({ success: false, message: "Error checking wallet", error: error.message });
+    res.status(500).json({ success: false, message: "Error checking wallet" });
   }
 };

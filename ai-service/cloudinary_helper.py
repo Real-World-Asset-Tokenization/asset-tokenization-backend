@@ -2,15 +2,26 @@ import os
 import cloudinary
 import cloudinary.uploader
 
-# Configure Cloudinary with direct credentials
-# TODO: Move these to environment variables once dotenv configuration is fixed
-cloudinary.config(
-    cloud_name='anzynni7',
-    api_key='964512946627428',
-    api_secret='dceuoiUGRGa7eDbTXKsIDzlZQsA'
-)
+# Credentials come from the environment only. Never hardcode them: anything in source control must be
+# treated as public. Values are read from the process environment, or from the backend's .env file.
+try:
+    from dotenv import load_dotenv
+    _here = os.path.dirname(os.path.abspath(__file__))
+    load_dotenv(os.path.join(_here, '.env'))
+    load_dotenv(os.path.join(_here, '..', '.env'))
+except ImportError:
+    pass  # python-dotenv is optional; real environment variables still work
 
-print('Cloudinary configured with cloud name: anzynni7')
+_cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME')
+_api_key = os.environ.get('CLOUDINARY_API_KEY')
+_api_secret = os.environ.get('CLOUDINARY_API_SECRET')
+
+CLOUDINARY_CONFIGURED = bool(_cloud_name and _api_key and _api_secret)
+if CLOUDINARY_CONFIGURED:
+    cloudinary.config(cloud_name=_cloud_name, api_key=_api_key, api_secret=_api_secret, secure=True)
+    print('Cloudinary configured')
+else:
+    print('WARNING: CLOUDINARY_CLOUD_NAME / CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET are not set; uploads will fail')
 
 def upload_to_cloudinary(file_path, folder='ai-processed', resource_type='auto'):
     """

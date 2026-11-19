@@ -37,7 +37,11 @@ except ImportError as e:
     IMAGEHASH_AVAILABLE = False
 
 app = Flask(__name__)
-CORS(app)
+# Only the backend calls this service (server to server), so no browser origin is allowed unless one is
+# listed explicitly in AI_SERVICE_CORS_ORIGINS (comma separated).
+_cors_origins = [o.strip() for o in os.environ.get('AI_SERVICE_CORS_ORIGINS', '').split(',') if o.strip()]
+if _cors_origins:
+    CORS(app, origins=_cors_origins)
 
 # Configuration
 UPLOAD_FOLDER = 'uploads'
@@ -1676,4 +1680,11 @@ def pipeline_verify():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5002, debug=True)
+    # debug=True exposes the Werkzeug interactive debugger, which allows remote code execution, so it is
+    # opt-in for local development only. The service listens on localhost unless AI_SERVICE_HOST says otherwise
+    # (put it behind a firewall / private network; it has no authentication of its own).
+    app.run(
+        host=os.environ.get('AI_SERVICE_HOST', '127.0.0.1'),
+        port=int(os.environ.get('AI_SERVICE_PORT', '5002')),
+        debug=os.environ.get('FLASK_DEBUG', '').lower() == 'true',
+    )
