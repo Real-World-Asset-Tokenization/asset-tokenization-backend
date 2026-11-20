@@ -29,6 +29,18 @@ const kycSchema = new mongoose.Schema({
   selfiePublicId: {
     type: String,
   },
+  livenessCheckPassed: {
+    type: Boolean,
+    default: false,
+  },
+  livenessChallenges: {
+    type: [String],
+    default: [],
+  },
+  livenessScore: {
+    type: Number,
+    default: 0,
+  },
   faceScore: {
     type: Number,
     default: 0,

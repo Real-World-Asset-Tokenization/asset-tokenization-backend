@@ -237,6 +237,19 @@ export const uploadSelfie = async (req, res) => {
     kyc.selfie = convertToHttpUrl(req.file.path);
     kyc.selfiePublicId = req.file.filename;
     kyc.verificationStatus = "under_review";
+
+    // Handle liveness detection data if provided
+    if (req.body.livenessData) {
+      try {
+        const livenessData = JSON.parse(req.body.livenessData);
+        kyc.livenessCheckPassed = livenessData.passed || false;
+        kyc.livenessChallenges = livenessData.challenges || [];
+        kyc.livenessScore = livenessData.score || 0;
+      } catch (parseError) {
+        console.error("Error parsing liveness data:", parseError);
+      }
+    }
+
     await kyc.save();
 
     res.status(200).json({
@@ -246,6 +259,9 @@ export const uploadSelfie = async (req, res) => {
         kycId: kyc._id,
         selfie: kyc.selfie,
         verificationStatus: kyc.verificationStatus,
+        livenessCheckPassed: kyc.livenessCheckPassed,
+        livenessChallenges: kyc.livenessChallenges,
+        livenessScore: kyc.livenessScore,
       },
     });
   } catch (error) {
@@ -403,8 +419,15 @@ export const verifyKYC = async (req, res) => {
         `selfie_${userId}_${Date.now()}.jpg`
       );
 
+      // Prepare liveness data if available
+      const livenessData = kyc.livenessCheckPassed ? {
+        passed: kyc.livenessCheckPassed,
+        challenges: kyc.livenessChallenges,
+        score: kyc.livenessScore
+      } : null;
+
       // Run the full 4-stage KYC pipeline
-      const pipelineResult = await aiService.runKYCPipeline(documentPath, selfiePath);
+      const pipelineResult = await aiService.runKYCPipeline(documentPath, selfiePath, livenessData);
 
       // Persist pipeline results and update KYC record
       await _applyPipelineResults(kyc, pipelineResult);
