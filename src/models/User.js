@@ -18,13 +18,20 @@ const userSchema = new mongoose.Schema({
   password: {
     type: String,
     required: [true, "Password is required"],
-    minlength: [6, "Password must be at least 6 characters"],
+    minlength: [8, "Password must be at least 8 characters"],
     select: false,
   },
   role: {
     type: String,
     enum: ["investor", "asset_owner", "admin", "compliance_officer"],
     default: "investor",
+  },
+  // Valuation powers are granted explicitly by an operator script, never chosen at
+  // sign-up, so a self-registered role cannot approve official property values.
+  permissions: {
+    type: [String],
+    enum: ["VALUATION_PROPOSE", "VALUATION_APPROVE"],
+    default: [],
   },
   isVerified: {
     type: Boolean,
@@ -36,6 +43,13 @@ const userSchema = new mongoose.Schema({
   },
   verifiedAt: {
     type: Date,
+  },
+  walletAddress: {
+    type: String,
+    lowercase: true,
+    trim: true,
+    sparse: true,
+    unique: true,
   },
   createdAt: {
     type: Date,
@@ -49,7 +63,7 @@ userSchema.pre("save", async function () {
     return;
   }
 
-  const salt = await bcrypt.genSalt(10);
+  const salt = await bcrypt.genSalt(12);
   this.password = await bcrypt.hash(this.password, salt);
 });
 

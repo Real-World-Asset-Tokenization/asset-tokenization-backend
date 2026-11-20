@@ -6,6 +6,8 @@ import {
   getMe,
   verifyUser,
   getAllUsers,
+  updateWallet,
+  checkWallet,
 } from "../controllers/authController.js";
 import { protect } from "../middleware/auth.js";
 
@@ -41,12 +43,26 @@ const registerValidation = [
   body("password")
     .notEmpty()
     .withMessage("Password is required")
-    .isLength({ min: 6 })
-    .withMessage("Password must be at least 6 characters"),
+    .isLength({ min: 8, max: 128 })
+    .withMessage("Password must be 8-128 characters"),
   body("role")
     .optional()
-    .isIn(["investor", "asset_owner", "admin", "compliance_officer"])
+    .isIn(["investor", "asset_owner"])
     .withMessage("Invalid role"),
+  body("walletAddress")
+    .optional({ nullable: true, checkFalsy: true })
+    .trim()
+    .matches(/^0x[a-fA-F0-9]{40}$/)
+    .withMessage("Invalid Ethereum wallet address format"),
+];
+
+const updateWalletValidation = [
+  body("walletAddress")
+    .trim()
+    .notEmpty()
+    .withMessage("Wallet address is required")
+    .matches(/^0x[a-fA-F0-9]{40}$/)
+    .withMessage("Invalid Ethereum wallet address format"),
 ];
 
 const loginValidation = [
@@ -58,7 +74,9 @@ const loginValidation = [
     .withMessage("Please provide a valid email")
     .normalizeEmail(),
   body("password")
+    .isString()
     .notEmpty()
+    .isLength({ max: 128 })
     .withMessage("Password is required"),
 ];
 
@@ -68,5 +86,7 @@ router.post("/login", loginValidation, validate, login);
 router.get("/me", protect, getMe);
 router.post("/verify/:userId", protect, verifyUser);
 router.get("/users", protect, getAllUsers);
+router.put("/wallet", protect, updateWalletValidation, validate, updateWallet);
+router.get("/wallet/check/:address", protect, checkWallet);
 
 export default router;

@@ -1,21 +1,37 @@
 import User from "../models/User.js";
 import jwt from "jsonwebtoken";
+import { asString } from "../config/security.js";
+
+// compliance_officer is a privileged role (it approves KYC and asset verification), so it is granted by an
+// administrator, never chosen at sign-up.
+const SELF_REGISTER_ROLES = ["investor", "asset_owner"];
 
 // Generate JWT Token
 const generateToken = (userId, role) => {
   return jwt.sign(
     { userId, role },
     process.env.JWT_SECRET,
-    { expiresIn: "7d" }
+    { expiresIn: process.env.JWT_EXPIRES_IN || "8h", algorithm: "HS256" }
   );
 };
 
 // Register User
 export const register = async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, role, walletAddress } = req.body;
+    // Force plain strings so a JSON body like {"email": {"$ne": null}} cannot become a query operator.
+    const email = asString(req.body.email).trim().toLowerCase();
+    const password = asString(req.body.password);
 
-    // Check if user already exists
+    // Administrators are created by an operator (npm run admin:create), never by sign-up.
+    if (role && !SELF_REGISTER_ROLES.includes(role)) {
+      return res.status(403).json({
+        success: false,
+        message: "This role cannot be chosen at sign-up",
+      });
+    }
+
+    // Check if user already exists by email
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({
@@ -24,12 +40,33 @@ export const register = async (req, res) => {
       });
     }
 
+    let normalizedWallet = null;
+    if (walletAddress) {
+      normalizedWallet = walletAddress.toLowerCase().trim();
+      if (!/^0x[a-f0-9]{40}$/i.test(normalizedWallet)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid Ethereum wallet address format. Must be a valid 42-character hex address (0x...).",
+        });
+      }
+
+      // Check if wallet address is already linked to another user
+      const existingWalletUser = await User.findOne({ walletAddress: normalizedWallet });
+      if (existingWalletUser) {
+        return res.status(400).json({
+          success: false,
+          message: "This wallet address is already associated with another user account. The same wallet cannot be shared between different users.",
+        });
+      }
+    }
+
     // Create new user
     const user = await User.create({
       name,
       email,
       password,
       role: role || "investor",
+      ...(normalizedWallet ? { walletAddress: normalizedWallet } : {}),
     });
 
     // Generate token
@@ -44,16 +81,22 @@ export const register = async (req, res) => {
           name: user.name,
           email: user.email,
           role: user.role,
+          walletAddress: user.walletAddress || null,
         },
         token,
       },
     });
   } catch (error) {
+    if (error.code === 11000 && error.keyPattern?.walletAddress) {
+      return res.status(400).json({
+        success: false,
+        message: "This wallet address is already linked to another user account. The same wallet cannot be shared between different users.",
+      });
+    }
     console.error("Register error:", error);
     res.status(500).json({
       success: false,
       message: "Error registering user",
-      error: error.message,
     });
   }
 };
@@ -61,7 +104,8 @@ export const register = async (req, res) => {
 // Login User
 export const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const email = asString(req.body.email).trim().toLowerCase();
+    const password = asString(req.body.password);
 
     // Find user and include password for comparison
     const user = await User.findOne({ email }).select("+password");
@@ -95,6 +139,7 @@ export const login = async (req, res) => {
           name: user.name,
           email: user.email,
           role: user.role,
+          walletAddress: user.walletAddress || null,
         },
         token,
       },
@@ -104,7 +149,6 @@ export const login = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error logging in",
-      error: error.message,
     });
   }
 };
@@ -130,6 +174,7 @@ export const getMe = async (req, res) => {
           email: user.email,
           role: user.role,
           isVerified: user.isVerified,
+          walletAddress: user.walletAddress || null,
           createdAt: user.createdAt,
         },
       },
@@ -139,7 +184,6 @@ export const getMe = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching user data",
-      error: error.message,
     });
   }
 };
@@ -199,7 +243,6 @@ export const verifyUser = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error verifying user",
-      error: error.message,
     });
   }
 };
@@ -240,7 +283,97 @@ export const getAllUsers = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching users",
-      error: error.message,
     });
+  }
+};
+
+// Update User's Connected Wallet Address
+export const updateWallet = async (req, res) => {
+  try {
+    const { walletAddress } = req.body;
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (!walletAddress || typeof walletAddress !== "string") {
+      return res.status(400).json({
+        success: false,
+        message: "Wallet address is required",
+      });
+    }
+
+    const normalizedWallet = walletAddress.toLowerCase().trim();
+
+    // Validate 42-character Ethereum address format (0x + 40 hex chars)
+    if (!/^0x[a-f0-9]{40}$/i.test(normalizedWallet)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid Ethereum wallet address format. Must be a valid 42-character hex address (0x...).",
+      });
+    }
+
+    // Uniqueness constraint: Ensure no other user has this wallet address
+    const existingUser = await User.findOne({
+      walletAddress: normalizedWallet,
+      _id: { $ne: user._id },
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: "This wallet address is already associated with another user account. The same wallet cannot be shared between different users.",
+      });
+    }
+
+    user.walletAddress = normalizedWallet;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Wallet updated successfully",
+      data: {
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          walletAddress: user.walletAddress,
+        },
+      },
+    });
+  } catch (error) {
+    if (error.code === 11000 && error.keyPattern?.walletAddress) {
+      return res.status(400).json({
+        success: false,
+        message: "This wallet address is already linked to another user account. The same wallet cannot be shared between different users.",
+      });
+    }
+    console.error("Update wallet error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error updating wallet",
+    });
+  }
+};
+
+
+// Who a wallet belongs to, from the signed-in user's point of view: "yours", "other_user"
+// or "unlinked". It never reveals which other account owns the wallet.
+export const checkWallet = async (req, res) => {
+  try {
+    const wallet = String(req.params.address || "").toLowerCase().trim();
+    if (!/^0x[a-f0-9]{40}$/.test(wallet)) {
+      return res.status(400).json({ success: false, message: "Invalid Ethereum wallet address format" });
+    }
+    const owner = await User.findOne({ walletAddress: wallet }).select("_id").lean();
+    const status = !owner ? "unlinked" : String(owner._id) === String(req.user.userId) ? "yours" : "other_user";
+    res.status(200).json({ success: true, data: { walletAddress: wallet, status } });
+  } catch (error) {
+    console.error("Check wallet error:", error);
+    res.status(500).json({ success: false, message: "Error checking wallet" });
   }
 };

@@ -32,9 +32,20 @@ Create or edit `.env` in `asset-tokenization-backend/`:
 ```dotenv
 PORT=5001
 FRONTEND_URL=http://localhost:5173
-# Optional: Provide MongoDB Atlas URI (or leave blank to use the active In-Memory Repository)
+# Required for authentication, KYC and compliance; only asset repositories have a fallback.
 MONGO_URI=mongodb://localhost:27017/rwa_tokenization
 ```
+
+If MongoDB cannot connect, authentication, KYC and compliance return HTTP 503
+with `DATABASE_UNAVAILABLE`. The asset fallback does not contain user accounts
+or KYC records. Check the configured database host, network/firewall access,
+and credentials, then restart the backend. For a local database, run MongoDB
+and use `mongodb://127.0.0.1:27017/rwa_tokenization`.
+
+Marketplace listings require a running blockchain RPC and a deployed
+`TokenMarketplace` at the address in `src/contracts/deployedContracts.json`.
+After resetting the local chain, redeploy contracts and refresh the deployment
+configuration. An absent contract returns `MARKETPLACE_NOT_DEPLOYED` (HTTP 503).
 
 ---
 

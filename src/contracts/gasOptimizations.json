@@ -1,0 +1,84 @@
+{
+  "generatedAt": "2026-10-22T08:02:55.542Z",
+  "listing": {
+    "approval": {
+      "separateApproveGas": 46354,
+      "fillAfterApproveGas": 144393,
+      "separateTotalGas": 190747,
+      "permitFillGas": 178161,
+      "transactionsSaved": 1,
+      "totalGasSavedPercent": 6.6
+    },
+    "onChain": {
+      "sellerListingGas": 313473,
+      "buyerPurchaseGas": 144249,
+      "totalGas": 457722
+    },
+    "signedOrder": {
+      "sellerListingGas": 0,
+      "buyerPurchaseGas": 145519,
+      "totalGas": 145519
+    },
+    "sellerGasSavedPercent": 100,
+    "totalGasSavedPercent": 68.21,
+    "buyerExtraGas": 1270
+  },
+  "voting": [
+    {
+      "voters": 10,
+      "individualTotalGas": 747630,
+      "individualPerVoteGas": 74763,
+      "batchTotalGas": 441442,
+      "batchPerVoteGas": 44144,
+      "totalGasSavedPercent": 40.95,
+      "holderGasAfterBatch": 0
+    },
+    {
+      "voters": 50,
+      "individualTotalGas": 3669750,
+      "individualPerVoteGas": 73395,
+      "batchTotalGas": 1969350,
+      "batchPerVoteGas": 39387,
+      "totalGasSavedPercent": 46.34,
+      "holderGasAfterBatch": 0
+    },
+    {
+      "voters": 100,
+      "individualTotalGas": 7322400,
+      "individualPerVoteGas": 73224,
+      "batchTotalGas": 3879312,
+      "batchPerVoteGas": 38793,
+      "totalGasSavedPercent": 47.02,
+      "holderGasAfterBatch": 0
+    }
+  ],
+  "minting": [
+    {
+      "tokens": 10,
+      "transactionsBaseline": 10,
+      "transactionsOptimized": 1,
+      "perTokenMintsTotalGas": 348790,
+      "singleMintGas": 50408,
+      "totalGasSavedPercent": 85.55,
+      "platformTokenizeGas": 201791
+    },
+    {
+      "tokens": 100,
+      "transactionsBaseline": 100,
+      "transactionsOptimized": 1,
+      "perTokenMintsTotalGas": 3334000,
+      "singleMintGas": 50408,
+      "totalGasSavedPercent": 98.49,
+      "platformTokenizeGas": 201791
+    },
+    {
+      "tokens": 1000,
+      "transactionsBaseline": 1000,
+      "transactionsOptimized": 1,
+      "perTokenMintsTotalGas": 33186100,
+      "singleMintGas": 50420,
+      "totalGasSavedPercent": 99.85,
+      "platformTokenizeGas": 201791
+    }
+  ]
+}

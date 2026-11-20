@@ -14,6 +14,7 @@ import {
   getAllAssets,
   getAssetDetails,
   updateVerificationStatus,
+  tokenizeAsset,
   confirmTokenizationConsent,
   getTokenizationStatus,
 } from "../controllers/assetController.js";
@@ -27,7 +28,30 @@ import {
 } from "../controllers/assetController.js";
 
 import { Asset } from "../models/Asset.js";
+import { syncAllWithChain, chainStatusFor } from "../services/chainSyncService.js";
 import { protect, authorize } from "../middleware/auth.js";
+import gasAnalyticsService from "../services/GasAnalyticsService.js";
+import User from "../models/User.js";
+import { requireDemoMode } from "../config/security.js";
+
+// The wallet named in the request body must be the one linked to the signed-in account. Without this,
+// anyone with an account could send platform funds or tokens to a wallet of their choosing.
+const ownWalletOnly = (field) => async (req, res, next) => {
+  try {
+    const wanted = String(req.body?.[field] || "").toLowerCase();
+    const account = await User.findById(req.user.userId).select("walletAddress").lean();
+    if (!wanted || !account?.walletAddress || account.walletAddress.toLowerCase() !== wanted) {
+      return res.status(403).json({
+        success: false,
+        error: "The wallet must be the one linked to your account",
+      });
+    }
+    next();
+  } catch (error) {
+    console.error("Wallet ownership check failed:", error);
+    res.status(500).json({ success: false, error: "Unable to verify wallet ownership" });
+  }
+};
 import {
   upload,
   uploadToCloudinaryMiddleware,
@@ -147,7 +171,16 @@ const getBlockchainContext = async (withSigner = false) => {
     signer || provider
   );
 
-  return { provider, signer, tokenContract };
+  const paymentTokenInfo = deployedData.contracts?.MockPaymentToken;
+  const paymentTokenContract = paymentTokenInfo
+    ? new ethers.Contract(
+        paymentTokenInfo.address,
+        paymentTokenInfo.abi,
+        signer || provider
+      )
+    : null;
+
+  return { provider, signer, tokenContract, paymentTokenContract };
 };
 
 // ==========================================
@@ -198,6 +231,10 @@ router.get("/status/:assetId", protect, getAssetStatus);
 // Get assets belonging to the authenticated user
 router.get("/my-assets", protect, getUserAssets);
 
+// Tokenize asset on blockchain (mint fractional ERC-1155 tokens)
+router.post("/:assetId/tokenize", protect, tokenizeAsset);
+router.post("/tokenize/:assetId", protect, tokenizeAsset);
+
 // Asset owner consents to tokenization
 router.post("/:assetId/consent", protect, confirmTokenizationConsent);
 
@@ -234,6 +271,16 @@ router.put(
 // ==========================================
 
 // Get all tokenized/platform assets
+router.get("/owned", protect, async (req, res) => {
+  try {
+    const states = await syncAllWithChain();
+    const assets = await Asset.find({ ownerId: req.user.userId });
+    const data = assets.map((a) => ({ ...(a.toObject ? a.toObject() : a), chainStatus: chainStatusFor(states, a.assetId) }));
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Unable to load your assets" });
+  }
+});
 router.get("/", getAssets);
 
 // Platform statistics
@@ -243,7 +290,7 @@ router.get("/stats", getPlatformStats);
 // 4. DEVELOPMENT FAUCET
 // ==========================================
 
-router.post("/faucet", protect, async (req, res) => {
+router.post("/faucet", protect, requireDemoMode, ownWalletOnly("address"), async (req, res) => {
   try {
     const { address } = req.body;
 
@@ -254,7 +301,7 @@ router.post("/faucet", protect, async (req, res) => {
       });
     }
 
-    const { provider, signer, tokenContract } =
+    const { provider, signer, tokenContract, paymentTokenContract } =
       await getBlockchainContext(true);
 
     // Send test ETH to the requested wallet
@@ -266,6 +313,21 @@ router.post("/faucet", protect, async (req, res) => {
     await ethTx.wait();
 
     let tokenTxHash = "";
+    let musdTxHash = "";
+
+    // Mint 10,000 mUSD payment liquidity to the requested wallet
+    if (paymentTokenContract) {
+      try {
+        const mTx = await paymentTokenContract.mint(
+          address,
+          ethers.parseUnits("10000", 6)
+        );
+        const mReceipt = await mTx.wait();
+        musdTxHash = mReceipt.hash;
+      } catch (mErr) {
+        console.warn("mUSD mint warning in faucet:", mErr.message);
+      }
+    }
 
     // Issue test property tokens if the deployer has enough
     if (
@@ -292,8 +354,9 @@ router.post("/faucet", protect, async (req, res) => {
 
     return res.json({
       success: true,
-      message: "Development faucet completed",
+      message: "Development faucet completed: Funded 1,000 ETH, 10,000 mUSD & property tokens",
       ethTxHash: ethTx.hash,
+      musdTxHash,
       tokenTxHash,
     });
   } catch (error) {
@@ -301,7 +364,7 @@ router.post("/faucet", protect, async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      error: error.message,
+      error: "Transaction could not be completed",
     });
   }
 });
@@ -347,7 +410,7 @@ router.get("/:id/available", async (req, res) => {
 // 6. BUY FRACTIONAL SHARES
 // ==========================================
 
-router.post("/:id/buy", protect, async (req, res) => {
+router.post("/:id/buy", protect, requireDemoMode, ownWalletOnly("buyerAddress"), async (req, res) => {
   try {
     const { buyerAddress, amount, paymentTxHash } = req.body;
     const assetId = Number(req.params.id);
@@ -400,6 +463,7 @@ router.post("/:id/buy", protect, async (req, res) => {
     );
 
     const receipt = await tx.wait();
+    await gasAnalyticsService.recordPlatformReceipt(receipt, "DirectTransfer", { assetId });
 
     const remainingAvailable =
       await tokenContract.balanceOf(
@@ -426,7 +490,7 @@ router.post("/:id/buy", protect, async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      error: error.message,
+      error: "Transaction could not be completed",
     });
   }
 });
@@ -435,7 +499,7 @@ router.post("/:id/buy", protect, async (req, res) => {
 // 7. SWAP PROPERTY SHARES
 // ==========================================
 
-router.post("/swap", protect, async (req, res) => {
+router.post("/swap", protect, requireDemoMode, ownWalletOnly("userAddress"), async (req, res) => {
   try {
     const {
       userAddress,
@@ -481,13 +545,11 @@ router.post("/swap", protect, async (req, res) => {
       });
     }
 
-    const sourcePrice =
-      sourceAsset.sharePriceLKR ??
-      sourceAsset.valuationLKR / sourceAsset.totalShares;
-
-    const targetPrice =
-      targetAsset.sharePriceLKR ??
-      targetAsset.valuationLKR / targetAsset.totalShares;
+    // The exchange rate follows each asset's live valuation and issued token
+    // count. Do not use sharePriceLKR here: it is a denormalized display field
+    // and could be stale after a valuation or supply update.
+    const sourcePrice = Number(sourceAsset.valuationLKR) / Number(sourceAsset.totalShares);
+    const targetPrice = Number(targetAsset.valuationLKR) / Number(targetAsset.totalShares);
 
     if (
       !Number.isFinite(sourcePrice) ||
@@ -551,6 +613,7 @@ router.post("/swap", protect, async (req, res) => {
     );
 
     const receipt = await tx.wait();
+    await gasAnalyticsService.recordPlatformReceipt(receipt, "DirectTransfer", { assetId: tgtId });
 
     const userSourceBalance =
       await tokenContract.balanceOf(userAddress, srcId);
@@ -573,7 +636,7 @@ router.post("/swap", protect, async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      error: error.message,
+      error: "Transaction could not be completed",
     });
   }
 });
