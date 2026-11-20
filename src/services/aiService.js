@@ -86,13 +86,18 @@ class AIService {
    *
    * @param {string} documentPath  Absolute path to the ID document image
    * @param {string} selfiePath    Absolute path to the selfie image
+   * @param {Object} livenessData  Optional liveness verification results
    * @returns {Promise<Object>}    Full pipeline result object from the AI service
    */
-  async runKYCPipeline(documentPath, selfiePath) {
+  async runKYCPipeline(documentPath, selfiePath, livenessData = null) {
     try {
       const formData = new FormData();
       formData.append('document', fs.createReadStream(documentPath));
       formData.append('selfie', fs.createReadStream(selfiePath));
+
+      if (livenessData) {
+        formData.append('livenessData', JSON.stringify(livenessData));
+      }
 
       const response = await axios.post(
         `${AI_SERVICE_URL}/pipeline/verify`,
