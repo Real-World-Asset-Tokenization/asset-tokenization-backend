@@ -19,6 +19,7 @@ import tokenizationRoutes from "./routes/tokenizationRoutes.js";
 import valuationRoutes from "./routes/valuationRoutes.js";
 import orderRoutes from "./routes/orderRoutes.js";
 import saleRoutes from "./routes/saleRoutes.js";
+import recommendationRoutes from "./routes/recommendationRoutes.js";
 
 import { pipelineVerify } from "./controllers/kycController.js";
 import { protect } from "./middleware/auth.js";
@@ -66,6 +67,9 @@ app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
 app.use(morgan(isProduction() ? "combined" : "dev"));
 
+// Serve uploaded files statically
+app.use('/uploads', express.static('uploads'));
+
 // ==================== API ROUTES ====================
 
 // Authentication and user management
@@ -103,6 +107,9 @@ app.use("/api/tokenization", tokenizationRoutes);
 
 // Manual revaluation, approval and blockchain publication
 app.use("/api/valuations", valuationRoutes);
+
+// Land-match recommendations. Does not read KYC or asset records.
+app.use("/api/recommendations", recommendationRoutes);
 
 // AI document verification pipeline
 app.post("/api/pipeline/verify", protect, requireDatabase, pipelineVerify);
@@ -170,6 +177,7 @@ async function startServer() {
       console.log(`KYC: http://localhost:${PORT}/api/kyc`);
       console.log(`Assets: http://localhost:${PORT}/api/assets`);
       console.log(`Compliance: http://localhost:${PORT}/api/compliance`);
+      console.log(`Recommendations: http://localhost:${PORT}/api/recommendations/match`);
       console.log(
         `AI Pipeline: http://localhost:${PORT}/api/pipeline/verify`
       );

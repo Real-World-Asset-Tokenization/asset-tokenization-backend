@@ -68,10 +68,32 @@ const assetSchema = new mongoose.Schema({
     required: true,
   },
 
+  // Geolocation coordinates
+  coordinates: {
+    latitude: {
+      type: Number,
+      default: null,
+    },
+    longitude: {
+      type: Number,
+      default: null,
+    },
+    address: {
+      type: String,
+      default: "",
+    },
+  },
+
   description: {
     type: String,
     default: "",
   },
+
+  // Multiple asset images (up to 5)
+  images: [{
+    url: String,
+    publicId: String,
+  }],
 
   // ==========================================
   // 3. VALUATION & TOKENIZATION
@@ -132,13 +154,54 @@ const assetSchema = new mongoose.Schema({
 
   status: {
     type: String,
-    enum: ["Pending", "Approved", "Tokenized", "Rejected"],
+    enum: ["Pending", "Approved", "Tokenized", "Rejected", "awaiting_consent", "spv_creation", "ownership_transfer", "ready_for_tokenization"],
     default: "Pending",
     index: true,
   },
 
   tokenizedAt: {
     type: Date,
+  },
+
+  // ==========================================
+  // TOKENIZATION WORKFLOW FIELDS
+  // ==========================================
+  tokenizationConsent: {
+    type: Boolean,
+    default: false,
+  },
+
+  tokenizationConsentAt: {
+    type: Date,
+  },
+
+  spvCreated: {
+    type: Boolean,
+    default: false,
+  },
+
+  spvCreatedAt: {
+    type: Date,
+  },
+
+  spvDetails: {
+    spvName: String,
+    spvRegistrationNumber: String,
+    spvAddress: String,
+    spvDocumentHash: String,
+  },
+
+  ownershipTransferred: {
+    type: Boolean,
+    default: false,
+  },
+
+  ownershipTransferredAt: {
+    type: Date,
+  },
+
+  ownershipTransferDocument: {
+    type: String,
   },
 
   // ==========================================

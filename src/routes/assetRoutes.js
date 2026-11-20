@@ -7,6 +7,7 @@ import { fileURLToPath } from "url";
 
 import {
   uploadAsset,
+  reuploadAssetDocuments,
   verifyAsset,
   getAssetStatus,
   getUserAssets,
@@ -14,6 +15,8 @@ import {
   getAssetDetails,
   updateVerificationStatus,
   tokenizeAsset,
+  confirmTokenizationConsent,
+  getTokenizationStatus,
 } from "../controllers/assetController.js";
 
 import {
@@ -108,6 +111,11 @@ const assetValidation = [
     .optional()
     .isLength({ min: 3, max: 3 })
     .withMessage("Currency must be 3 characters (e.g., LKR)"),
+
+  body("location")
+    .trim()
+    .notEmpty()
+    .withMessage("Location is required"),
 ];
 
 // ==========================================
@@ -190,11 +198,28 @@ router.post(
     { name: "priorDeeds", maxCount: 1 },
     { name: "certificates", maxCount: 1 },
     { name: "document", maxCount: 1 },
+    { name: "images", maxCount: 5 },
   ]),
   uploadToCloudinaryMiddleware("asset-documents"),
   assetValidation,
   validate,
   uploadAsset
+);
+
+// Re-upload asset documents (for rejected/failed verification)
+router.post(
+  "/:assetId/reupload",
+  protect,
+  upload.fields([
+    { name: "deed", maxCount: 1 },
+    { name: "surveyPlan", maxCount: 1 },
+    { name: "extracts", maxCount: 1 },
+    { name: "priorDeeds", maxCount: 1 },
+    { name: "certificates", maxCount: 1 },
+    { name: "images", maxCount: 5 },
+  ]),
+  uploadToCloudinaryMiddleware("asset-documents"),
+  reuploadAssetDocuments
 );
 
 // Request asset verification
@@ -209,6 +234,12 @@ router.get("/my-assets", protect, getUserAssets);
 // Tokenize asset on blockchain (mint fractional ERC-1155 tokens)
 router.post("/:assetId/tokenize", protect, tokenizeAsset);
 router.post("/tokenize/:assetId", protect, tokenizeAsset);
+
+// Asset owner consents to tokenization
+router.post("/:assetId/consent", protect, confirmTokenizationConsent);
+
+// Get tokenization workflow status
+router.get("/:assetId/tokenization-status", protect, getTokenizationStatus);
 
 // ==========================================
 // 2. COMPLIANCE OFFICER / ADMIN ROUTES

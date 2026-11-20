@@ -10,6 +10,22 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Helper function to convert local file path to HTTP URL
+const convertToHttpUrl = (filePath) => {
+  if (!filePath) return null;
+  
+  // If it's already an HTTP URL, return as-is
+  if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
+    return filePath;
+  }
+  
+  // Extract filename from local path
+  const filename = path.basename(filePath);
+  
+  // Return HTTP URL
+  return `http://localhost:5001/uploads/${filename}`;
+};
+
 // Cloudinary integration stub - can be implemented later
 const deleteFromCloudinary = async (publicId) => {
   // Placeholder for Cloudinary deletion
@@ -72,6 +88,16 @@ export const uploadDocument = async (req, res) => {
             throw new Error(`Local file not found: ${imageUrl}`);
           }
           return imageUrl;
+        }
+        if (imageUrl.startsWith('http://localhost') || imageUrl.startsWith('http://127.0.0.1')) {
+          // Convert HTTP URL to local file path
+          const filename = path.basename(imageUrl);
+          const localPath = path.join(__dirname, '../../uploads', filename);
+          
+          if (!fs.existsSync(localPath)) {
+            throw new Error(`Local file not found: ${localPath}`);
+          }
+          return localPath;
         }
         const downloadPath = path.join(tempDir, fileName);
         const response = await axios({ method: "get", url: imageUrl, responseType: "stream" });
@@ -149,7 +175,7 @@ export const uploadDocument = async (req, res) => {
         userId,
         idType,
         idNumber: normalizedEnteredId,
-        documentImage: req.file.path,
+        documentImage: convertToHttpUrl(req.file.path),
         documentImagePublicId: req.file.filename,
         verificationStatus: "pending",
       });
@@ -207,10 +233,23 @@ export const uploadSelfie = async (req, res) => {
       });
     }
 
-    // Update selfie with local file path
-    kyc.selfie = req.file.path;
+    // Update selfie with HTTP URL
+    kyc.selfie = convertToHttpUrl(req.file.path);
     kyc.selfiePublicId = req.file.filename;
     kyc.verificationStatus = "under_review";
+
+    // Handle liveness detection data if provided
+    if (req.body.livenessData) {
+      try {
+        const livenessData = JSON.parse(req.body.livenessData);
+        kyc.livenessCheckPassed = livenessData.passed || false;
+        kyc.livenessChallenges = livenessData.challenges || [];
+        kyc.livenessScore = livenessData.score || 0;
+      } catch (parseError) {
+        console.error("Error parsing liveness data:", parseError);
+      }
+    }
+
     await kyc.save();
 
     res.status(200).json({
@@ -220,6 +259,9 @@ export const uploadSelfie = async (req, res) => {
         kycId: kyc._id,
         selfie: kyc.selfie,
         verificationStatus: kyc.verificationStatus,
+        livenessCheckPassed: kyc.livenessCheckPassed,
+        livenessChallenges: kyc.livenessChallenges,
+        livenessScore: kyc.livenessScore,
       },
     });
   } catch (error) {
@@ -227,6 +269,82 @@ export const uploadSelfie = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error uploading selfie",
+      error: error.message,
+    });
+  }
+};
+
+// ── Re-upload KYC Documents (for failed verification) ───────────────────────
+export const reuploadKYCDocuments = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { idType, idNumber } = req.body;
+
+    const kyc = await KYC.findOne({ userId });
+    if (!kyc) {
+      return res.status(404).json({
+        success: false,
+        message: "KYC record not found",
+      });
+    }
+
+    // Only allow re-upload if verification failed or is pending
+    if (kyc.verificationStatus === "approved") {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot re-upload documents for an approved KYC",
+      });
+    }
+
+    let documentImage = kyc.documentImage;
+    let documentPublicId = kyc.documentPublicId;
+    let selfie = kyc.selfie;
+    let selfiePublicId = kyc.selfiePublicId;
+
+    // Handle document re-upload
+    if (req.files?.document?.[0]) {
+      documentImage = convertToHttpUrl(req.files.document[0].path);
+      documentPublicId = req.files.document[0].filename;
+    }
+
+    // Handle selfie re-upload
+    if (req.files?.selfie?.[0]) {
+      selfie = convertToHttpUrl(req.files.selfie[0].path);
+      selfiePublicId = req.files.selfie[0].filename;
+    }
+
+    // Reset verification status and clear previous results
+    kyc.documentImage = documentImage;
+    kyc.documentPublicId = documentPublicId;
+    kyc.selfie = selfie;
+    kyc.selfiePublicId = selfiePublicId;
+    kyc.idType = idType || kyc.idType;
+    kyc.idNumber = idNumber || kyc.idNumber;
+    kyc.verificationStatus = "pending";
+    kyc.faceScore = undefined;
+    kyc.riskScore = undefined;
+    kyc.documentAuthentic = false;
+    kyc.ocrData = undefined;
+    kyc.pipelineResults = undefined;
+    kyc.verifiedAt = undefined;
+
+    await kyc.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "KYC documents re-uploaded successfully. Please run verification again.",
+      data: {
+        kycId: kyc._id,
+        documentImage: kyc.documentImage,
+        selfie: kyc.selfie,
+        verificationStatus: kyc.verificationStatus,
+      },
+    });
+  } catch (error) {
+    console.error("Re-upload KYC documents error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error re-uploading KYC documents",
       error: error.message,
     });
   }
@@ -270,6 +388,16 @@ export const verifyKYC = async (req, res) => {
         }
         return imageUrl;
       }
+      if (imageUrl.startsWith('http://localhost') || imageUrl.startsWith('http://127.0.0.1')) {
+        // Convert HTTP URL to local file path
+        const filename = path.basename(imageUrl);
+        const localPath = path.join(__dirname, '../../uploads', filename);
+        
+        if (!fs.existsSync(localPath)) {
+          throw new Error(`Local file not found: ${localPath}`);
+        }
+        return localPath;
+      }
       const downloadPath = path.join(tempDir, fileName);
       const response = await axios({ method: "get", url: imageUrl, responseType: "stream" });
       const writer = fs.createWriteStream(downloadPath);
@@ -291,8 +419,15 @@ export const verifyKYC = async (req, res) => {
         `selfie_${userId}_${Date.now()}.jpg`
       );
 
+      // Prepare liveness data if available
+      const livenessData = kyc.livenessCheckPassed ? {
+        passed: kyc.livenessCheckPassed,
+        challenges: kyc.livenessChallenges,
+        score: kyc.livenessScore
+      } : null;
+
       // Run the full 4-stage KYC pipeline
-      const pipelineResult = await aiService.runKYCPipeline(documentPath, selfiePath);
+      const pipelineResult = await aiService.runKYCPipeline(documentPath, selfiePath, livenessData);
 
       // Persist pipeline results and update KYC record
       await _applyPipelineResults(kyc, pipelineResult);
@@ -358,8 +493,8 @@ export const getKYCStatus = async (req, res) => {
         rejectionReason: kyc.rejectionReason,
         createdAt: kyc.createdAt,
         verifiedAt: kyc.verifiedAt,
-        documentImage: kyc.documentImage,
-        selfie: kyc.selfie,
+        documentImage: convertToHttpUrl(kyc.documentImage),
+        selfie: convertToHttpUrl(kyc.selfie),
       },
     });
   } catch (error) {
@@ -419,8 +554,8 @@ export const getKYCDetailsByUserId = async (req, res) => {
           ocrData: kyc.ocrData,
           pipelineResults: kyc.pipelineResults,
           rejectionReason: kyc.rejectionReason,
-          documentImage: kyc.documentImage,
-          selfie: kyc.selfie,
+          documentImage: convertToHttpUrl(kyc.documentImage),
+          selfie: convertToHttpUrl(kyc.selfie),
           createdAt: kyc.createdAt,
           verifiedAt: kyc.verifiedAt,
         },
@@ -563,6 +698,17 @@ export const adminVerifyKYC = async (req, res) => {
         }
         console.log(`Using local file: ${imageUrl}`);
         return imageUrl;
+      }
+      if (imageUrl.startsWith('http://localhost') || imageUrl.startsWith('http://127.0.0.1')) {
+        // Convert HTTP URL to local file path
+        const filename = path.basename(imageUrl);
+        const localPath = path.join(__dirname, '../../uploads', filename);
+        
+        if (!fs.existsSync(localPath)) {
+          throw new Error(`Local file not found: ${localPath}`);
+        }
+        console.log(`Using local file from HTTP URL: ${localPath}`);
+        return localPath;
       }
       console.log(`Downloading from URL: ${imageUrl}`);
       const downloadPath = path.join(tempDir, fileName);

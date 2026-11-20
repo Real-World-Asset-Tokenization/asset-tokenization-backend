@@ -4,6 +4,7 @@ import os
 from werkzeug.utils import secure_filename
 import uuid
 import sys
+import json
 from cloudinary_helper import upload_to_cloudinary, upload_image, upload_document
 
 # Try to import AI libraries with error handling
@@ -645,7 +646,7 @@ def allowed_file(filename):
 # PIPELINE STAGE 4: Risk Analysis Engine
 # =============================================================================
 
-def run_risk_analysis(doc_clarity, selfie_clarity, ocr_data, face_result):
+def run_risk_analysis(doc_clarity, selfie_clarity, ocr_data, face_result, liveness_data=None):
     """
     Compute a weighted trust/risk score from all pipeline stage results.
 
@@ -653,8 +654,9 @@ def run_risk_analysis(doc_clarity, selfie_clarity, ocr_data, face_result):
         Document clarity     20 pts  (qualityScore * 20)
         Selfie clarity       10 pts  (qualityScore * 10)
         OCR completeness     20 pts  (fields extracted / 7 * 20)
-        Face similarity      30 pts  (similarityScore / 100 * 30)
-        Document authentic   20 pts  (passed=True -> 20, else 0)
+        Face similarity      25 pts  (similarityScore / 100 * 25)
+        Liveness check       10 pts  (livenessScore / 100 * 10, if available)
+        Document authentic   15 pts  (passed=True -> 15, else 0)
 
     Decision thresholds:
         >= 80  -> approved
@@ -700,24 +702,46 @@ def run_risk_analysis(doc_clarity, selfie_clarity, ocr_data, face_result):
     }
     total_score += ocr_pts
 
-    # -- Face similarity (30 pts) --
+    # -- Face similarity (25 pts) --
     similarity = face_result.get('similarityScore', 0.0)
-    face_pts = round((similarity / 100.0) * 30, 2)
+    face_pts = round((similarity / 100.0) * 25, 2)
     factors['faceSimilarity'] = {
         'score': face_pts,
-        'maxScore': 30,
+        'maxScore': 25,
         'similarityScore': similarity,
         'match': face_result.get('match', False),
         'confidence': face_result.get('confidence', 'low')
     }
     total_score += face_pts
 
-    # -- Document authenticity (20 pts) --
+    # -- Liveness check (10 pts) --
+    if liveness_data:
+        liveness_passed = liveness_data.get('passed', False)
+        liveness_score = liveness_data.get('score', 0)
+        liveness_pts = round((liveness_score / 100.0) * 10, 2) if liveness_passed else 0.0
+        factors['livenessCheck'] = {
+            'score': liveness_pts,
+            'maxScore': 10,
+            'passed': liveness_passed,
+            'scoreValue': liveness_score,
+            'challenges': liveness_data.get('challenges', [])
+        }
+        total_score += liveness_pts
+    else:
+        # No liveness data - this is acceptable but no points awarded
+        factors['livenessCheck'] = {
+            'score': 0,
+            'maxScore': 10,
+            'passed': None,
+            'note': 'Liveness check not performed'
+        }
+
+    # -- Document authenticity (15 pts) --
     doc_authentic = doc_clarity.get('passed', False)
-    auth_pts = 20.0 if doc_authentic else 0.0
+    auth_pts = 15.0 if doc_authentic else 0.0
     factors['documentAuthenticity'] = {
         'score': auth_pts,
-        'maxScore': 20,
+        'maxScore': 15,
         'authentic': doc_authentic
     }
     total_score += auth_pts
@@ -1434,6 +1458,7 @@ def pipeline_verify():
     Multipart form fields required:
         document  — ID card image (png/jpg/jpeg/pdf)
         selfie    — Live selfie photo
+        livenessData (optional) — JSON string with liveness verification results
 
     Pipeline stages (sequential, fail-fast on Stage 1 failure):
         Stage 1: Image clarity check — document AND selfie
@@ -1469,7 +1494,7 @@ def pipeline_verify():
           "riskScore":  float (0-100),
           "riskLevel":  "low" | "medium" | "high",
           "decision":   "approved" | "under_review" | "rejected",
-          "factors":    { documentClarity, selfieClarity, ocrCompleteness, faceSimilarity, documentAuthenticity }
+          "factors":    { documentClarity, selfieClarity, ocrCompleteness, faceSimilarity, livenessCheck, documentAuthenticity }
         }
       },
       "documentUrl": string | null,
@@ -1483,6 +1508,14 @@ def pipeline_verify():
 
     document_file = request.files['document']
     selfie_file = request.files['selfie']
+
+    # Parse liveness data if provided
+    liveness_data = None
+    if request.form.get('livenessData'):
+        try:
+            liveness_data = json.loads(request.form.get('livenessData'))
+        except json.JSONDecodeError:
+            print("[KYC Pipeline] Warning: Invalid liveness data JSON, ignoring")
 
     if document_file.filename == '' or selfie_file.filename == '':
         return jsonify({'error': 'No file selected for document or selfie'}), 400
@@ -1651,7 +1684,7 @@ def pipeline_verify():
         # ── STAGE 4: Risk Analysis & Decision ────────────────────────────────
         print("[KYC Pipeline] Stage 4 — Risk Analysis")
 
-        risk_result = run_risk_analysis(doc_clarity, selfie_clarity, ocr_data, face_data)
+        risk_result = run_risk_analysis(doc_clarity, selfie_clarity, ocr_data, face_data, liveness_data)
         pipeline_result['stages']['stage4_risk'] = risk_result
 
         pipeline_result['success'] = True
